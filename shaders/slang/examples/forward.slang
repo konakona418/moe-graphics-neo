@@ -1,11 +1,14 @@
 // [moe("vertex", "fragment")]
 
+// Push constants are addressed by name from C++ (renderer.GetPushConstant +
+// SetPushConstant); the names below are chosen freely.
 struct PushConstants {
     float4x4 mvp;
     float4x4 model;
 };
 
-[[vk::push_constant]] PushConstants pcs;
+[vk::push_constant]
+PushConstants pcs;
 
 struct VertexOutput {
     float4 position : SV_Position;

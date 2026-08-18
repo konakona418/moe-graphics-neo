@@ -1,8 +1,7 @@
 #include <examples/common/App.hpp>
 
+#include <Neo/Renderer.hpp>
 #include <Neo/Uploader.hpp>
-#include <RHI/CommandList.hpp>
-#include <RHI/Pipeline.hpp>
 #include <RHI/Shader.hpp>
 
 #include <imgui.h>
@@ -18,17 +17,15 @@
 
 namespace {
     struct ForwardData {
+        moe::neo::Uploader mUploader;
         moe::neo::UploadedMesh mMesh;
         moe::rhi::Shader mVert;
         moe::rhi::Shader mFrag;
         moe::rhi::ShaderProgram mProgram;
-        moe::rhi::GraphicsPipeline mPipeline;
+        moe::neo::Renderer mRenderer;
+        int32_t mMvpIndex{-1};
+        int32_t mModelIndex{-1};
         float mAngle{0.0f};
-    };
-
-    struct PushConstants {
-        glm::mat4 mMvp;
-        glm::mat4 mModel;
     };
 
     moe::neo::Mesh MakeBoxMesh() {
@@ -68,13 +65,12 @@ namespace {
         auto* data = static_cast<ForwardData*>(userdata);
         std::string error;
 
-        moe::neo::Uploader uploader;
-        if (!uploader.Init(ctx.mDevice, error)) {
+        if (!data->mUploader.Init(ctx.mDevice, error)) {
             std::fprintf(stderr, "forward: uploader init: %s\n", error.c_str());
             return false;
         }
         moe::neo::Mesh box = MakeBoxMesh();
-        if (!uploader.UploadMesh(box, data->mMesh, error)) {
+        if (!data->mUploader.UploadMesh(box, data->mMesh, error)) {
             std::fprintf(stderr, "forward: upload: %s\n", error.c_str());
             return false;
         }
@@ -89,30 +85,26 @@ namespace {
             return false;
         }
 
-        moe::rhi::GraphicsPipelineState state{};
-        state.mProgram = &data->mProgram;
-        state.mTopology = moe::rhi::PrimitiveTopology::kTriangleList;
-        state.mColorFormatCount = 1;
-        state.mColorFormats[0] = ctx.mSwapchain.GetFormat();
-        state.mBlendAttachmentCount = 1;
-        state.mRaster.mCullMode = moe::rhi::CullMode::kBack; // convex cube needs no depth, back-cull suffices
-        state.mRaster.mFrontFace = moe::rhi::FrontFace::kCounterClockwise;
-        // vertex layout matching the Uploader interleave: pos@0, nrm@12, uv@24, stride 32
-        state.mVertexBindingCount = 1;
-        state.mVertexBindings[0] = {0, 32, false};
-        state.mVertexAttributeCount = 3;
-        state.mVertexAttributes[0] = {0, 0, moe::rhi::Format::kR32G32B32Float, 0};
-        state.mVertexAttributes[1] = {1, 0, moe::rhi::Format::kR32G32B32Float, 12};
-        state.mVertexAttributes[2] = {2, 0, moe::rhi::Format::kR32G32Float, 24};
-
-        if (!ctx.mDevice.GetOrCreateGraphicsPipeline(state, data->mPipeline)) {
-            std::fprintf(stderr, "forward: pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
+        if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
+                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), error)) {
+            std::fprintf(stderr, "forward: renderer: %s\n", error.c_str());
+            return false;
+        }
+        // push constant names are chosen freely; look up once here
+        data->mMvpIndex = data->mRenderer.GetPushConstant(data->mProgram, "mvp");
+        data->mModelIndex = data->mRenderer.GetPushConstant(data->mProgram, "model");
+        if (data->mMvpIndex < 0 || data->mModelIndex < 0) {
+            std::fprintf(stderr, "forward: shader lacks 'mvp'/'model' push constants\n");
             return false;
         }
         return true;
     }
 
-    void Render(void* userdata, examples::AppContext& ctx, moe::rhi::CommandList& cmd) {
+    // The scene is rendered by the Renderer in mPostRender (no render pass
+    // active there); the App's swapchain pass stays empty.
+    void Render(void*, examples::AppContext&, moe::rhi::CommandList&) {}
+
+    void PostRender(void* userdata, examples::AppContext& ctx, moe::rhi::CommandList& cmd) {
         auto* data = static_cast<ForwardData*>(userdata);
 
         data->mAngle += 0.01f;
@@ -123,14 +115,19 @@ namespace {
                 static_cast<float>(ctx.mSwapchain.GetWidth()) / static_cast<float>(ctx.mSwapchain.GetHeight()),
                 0.1f, 100.0f);
         proj[1][1] *= -1; // Vulkan NDC: flip Y (same as the old engine's camera)
-        const PushConstants pc{proj * view * model, model};
+        const glm::mat4 mvp = proj * view * model;
 
-        cmd.BindGraphicsPipeline(data->mPipeline);
-        cmd.SetViewport(ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight());
-        cmd.BindVertexBuffer(data->mMesh.mVertexBuffer, 0);
-        cmd.BindIndexBuffer(data->mMesh.mIndexBuffer);
-        cmd.SetPushConstants(data->mPipeline, 0, sizeof(pc), &pc);
-        cmd.DrawIndexed(data->mMesh.mIndexCount, 1, 0, 0, 0);
+        const float clear[4] = {0.15f, 0.15f, 0.18f, 1.0f};
+        moe::rhi::Image swapImage;
+        if (!ctx.mSwapchain.GetCurrentImage(swapImage)) {
+            return;
+        }
+        data->mRenderer.BeginFrame(cmd, swapImage, ctx.mSwapchain.GetFormat(), clear);
+        data->mRenderer.SetPushConstant(data->mMvpIndex, &mvp, sizeof(mvp));
+        data->mRenderer.SetPushConstant(data->mModelIndex, &model, sizeof(model));
+        data->mRenderer.Draw(data->mMesh, data->mProgram);
+        data->mRenderer.EndFrame();
+        swapImage.Destroy(); // borrowed wrapper: only drops the wrapper
     }
 
     void DrawUI(void* userdata, examples::AppContext&) {
@@ -144,6 +141,7 @@ namespace {
 
     void Shutdown(void* userdata, examples::AppContext&) {
         auto* data = static_cast<ForwardData*>(userdata);
+        data->mRenderer.Destroy();
         data->mMesh.Destroy();
     }
 }// namespace
@@ -153,6 +151,7 @@ int main() {
     examples::AppCallbacks callbacks{};
     callbacks.mSetup = Setup;
     callbacks.mRender = Render;
+    callbacks.mPostRender = PostRender;
     callbacks.mDrawUI = DrawUI;
     callbacks.mShutdown = Shutdown;
     callbacks.mUserdata = &data;

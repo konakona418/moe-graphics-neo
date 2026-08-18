@@ -444,7 +444,6 @@ namespace moe::rhi {
                 PipelineNode& node = *mImpl->mNodes[index];
                 if (!node.mIsCompute && node.mGraphicsState == state) {
                     out.mNode = &node;
-                    moe::Logger::debug("RHI graphics pipeline cache hit (hash {:016x})", key);
                     return true;
                 }
             }
@@ -478,7 +477,6 @@ namespace moe::rhi {
                 PipelineNode& node = *mImpl->mNodes[index];
                 if (node.mIsCompute && node.mComputeState == state) {
                     out.mNode = &node;
-                    moe::Logger::debug("RHI compute pipeline cache hit (hash {:016x})", key);
                     return true;
                 }
             }

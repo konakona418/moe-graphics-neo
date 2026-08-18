@@ -4,6 +4,7 @@ add_library(moe-neo STATIC
   Importer.cpp
   Input.cpp
   OggProvider.cpp
+  Renderer.cpp
   SceneGraph.cpp
   TextureLoader.cpp
   Uploader.cpp

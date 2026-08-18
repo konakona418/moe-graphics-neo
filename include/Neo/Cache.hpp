@@ -89,6 +89,18 @@ namespace moe::neo {
             return mCount;
         }
 
+        // Calls fn(T&) for every live value (e.g. explicit teardown of
+        // GPU-backed values before Clear()).
+        template<typename F>
+        void ForEach(F&& fn) {
+            for (uint32_t i = 0; i < mSlots.GetCapacity(); ++i) {
+                Slot* slot = mSlots.Get(i);
+                if (slot->mOccupied) {
+                    fn(slot->mValue);
+                }
+            }
+        }
+
     private:
         // Only the mValue sub-object is a live C++ object: mGeneration and
         // mOccupied are plain bookkeeping bytes (zeroed when a Pool block is

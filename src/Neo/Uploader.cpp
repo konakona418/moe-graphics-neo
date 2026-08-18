@@ -1,5 +1,6 @@
 #include "Neo/Uploader.hpp"
 
+#include <Core/Logger.hpp>
 #include <RHI/CommandList.hpp>
 
 #include <cstring>
@@ -149,6 +150,8 @@ namespace moe::neo {
         out.mNormalOffset = normalOffset;
         out.mUvOffset = uvOffset;
         out.mColorOffset = colorOffset;
+        moe::Logger::info("Uploaded mesh '{}' ({} verts, {} indices, stride {})",
+                mesh.mName, out.mVertexCount, out.mIndexCount, out.mVertexStride);
         return true;
     }
 
@@ -253,6 +256,9 @@ namespace moe::neo {
         }
         cmd.Destroy();
         staging.Destroy();
+        moe::Logger::info("Uploaded texture '{}' ({}x{}x{}, {} ch, {})",
+                texture.mName, texture.mWidth, texture.mHeight, texture.mDepth,
+                texture.mChannels, texture.mSrgb ? "sRGB" : "linear");
         return true;
     }
 

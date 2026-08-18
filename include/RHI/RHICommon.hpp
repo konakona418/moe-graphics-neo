@@ -267,6 +267,15 @@ namespace moe::rhi {
         uint32_t mSize{0};
     };
 
+    // One member of a push constant block (reflection; name lets higher
+    // layers address fields by name, e.g. an engine feeding mModel).
+    struct PushConstantFieldInfo {
+        std::string mName;
+        uint32_t mOffset{0};
+        uint32_t mSize{0};
+        ShaderStage mStage{ShaderStage::kCompute};
+    };
+
     struct VertexInputAttributeInfo {
         uint32_t mLocation{0};
         Format mFormat{Format::kR32G32B32A32Float};
@@ -275,6 +284,7 @@ namespace moe::rhi {
     struct ShaderReflection {
         std::vector<std::vector<DescriptorBindingInfo>> mDescriptorSets; // [setIndex][bindings]
         std::vector<PushConstantRange> mPushConstantRanges;
+        std::vector<PushConstantFieldInfo> mPushConstantFields; // block members, per stage
         std::vector<VertexInputAttributeInfo> mVertexInputs; // vertex stage only
         uint32_t mWorkgroupSizeX{1};
         uint32_t mWorkgroupSizeY{1};

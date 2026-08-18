@@ -1,6 +1,7 @@
 #include "examples/common/App.hpp"
 
 #include <Core/Defer.hpp>
+#include <Core/Logger.hpp>
 #include <RHI/Image.hpp>
 
 #include <chrono>
@@ -37,6 +38,8 @@ namespace examples {
             return false;
         }
         moe::Defer swapchainCleanup([&] { mSwapchain.Destroy(); });
+        moe::Logger::info("App: swapchain ready ({}x{})",
+                mSwapchain.GetWidth(), mSwapchain.GetHeight());
 
         if (!mDevice.CreateCommandList(mCommandList)) {
             error = mDevice.GetLastError();
@@ -138,6 +141,20 @@ namespace examples {
                 break;
             }
             mInput.EndFrame(); // clear per-frame edges + mouse deltas
+
+            // per-second frame statistics (avoid flooding the log)
+            const auto frameNow = std::chrono::steady_clock::now();
+            const double frameElapsed = std::chrono::duration<double>(frameNow - lastFrame).count();
+            if (mFpsTime.time_since_epoch().count() == 0) {
+                mFpsTime = frameNow;
+            }
+            mFpsFrames += 1;
+            const double fpsElapsed = std::chrono::duration<double>(frameNow - mFpsTime).count();
+            if (frameElapsed > 0.0 && fpsElapsed >= 1.0) {
+                moe::Logger::info("App: {:.1f} fps", static_cast<double>(mFpsFrames) / fpsElapsed);
+                mFpsTime = frameNow;
+                mFpsFrames = 0;
+            }
         }
         mDevice.WaitIdle();
 

@@ -1,0 +1,21 @@
+[2026-08-18 23:19:21] [info] [Unknown] RHI selected GPU: AMD Radeon Graphics (RADV RENOIR)
+[2026-08-18 23:19:21] [info] [Unknown] App: swapchain ready (1280x720)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/im3d/point.vert.spv (2112 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/im3d/point.frag.spv (852 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI compiled graphics pipeline (2 stage(s), hash 9ce28bb9a74e23a4)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/im3d/line.vert.spv (2064 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/im3d/line.frag.spv (852 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/im3d/line.geom.spv (3000 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI compiled graphics pipeline (3 stage(s), hash 65ab6c0912aff352)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/im3d/triangle.vert.spv (1804 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/im3d/triangle.frag.spv (384 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI compiled graphics pipeline (2 stage(s), hash 875c0a8996e04085)
+[2026-08-18 23:19:21] [info] [Unknown] Uploaded mesh 'box' (24 verts, 36 indices, stride 32)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/examples/forward.vert.spv (1196 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] RHI shader loaded: /home/lain/Documents/Repositories/_projects/nwpu-gamedev-2025/shaders/examples/forward.frag.spv (796 bytes)
+[2026-08-18 23:19:21] [info] [Unknown] Renderer initialized (1280x720)
+[2026-08-18 23:19:21] [info] [Unknown] RHI compiled graphics pipeline (2 stage(s), hash 98ca7a74d6d91809)
+[2026-08-18 23:19:22] [info] [Unknown] Renderer frame stats: 63.4 fps, 1 avg draws/frame, 4 cached pipelines
+[2026-08-18 23:19:22] [info] [Unknown] App: 63.6 fps
+[2026-08-18 23:19:23] [info] [Unknown] Renderer frame stats: 59.9 fps, 1 avg draws/frame, 4 cached pipelines
+[2026-08-18 23:19:23] [info] [Unknown] App: 59.9 fps

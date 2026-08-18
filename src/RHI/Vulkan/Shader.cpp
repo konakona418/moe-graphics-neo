@@ -95,6 +95,11 @@ namespace moe::rhi {
         for (uint32_t i = 0; i < module.push_constant_block_count; ++i) {
             const SpvReflectBlockVariable& block = module.push_constant_blocks[i];
             reflection.mPushConstantRanges.push_back({stage, block.offset, block.size});
+            for (uint32_t f = 0; f < block.member_count; ++f) {
+                const SpvReflectBlockVariable& member = block.members[f];
+                reflection.mPushConstantFields.push_back(
+                        {member.name, block.offset + member.offset, member.size, stage});
+            }
         }
         for (uint32_t i = 0; i < module.input_variable_count; ++i) {
             const SpvReflectInterfaceVariable* input = module.input_variables[i];
