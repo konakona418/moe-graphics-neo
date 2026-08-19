@@ -11,6 +11,7 @@
 #include <RHI/Shader.hpp>
 
 #include "Neo/Cache.hpp"
+#include "Neo/SwapchainImage.hpp"
 #include "Neo/Uploader.hpp"
 
 #include <glm/glm.hpp>
@@ -18,14 +19,16 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace moe::neo {
     constexpr uint32_t kMaxTextureBindings = 8;
 
-    // Rendering intent (GL-style state). Set with SetState: sticky per frame,
-    // but every Draw snapshots the state it sees, so later changes never
-    // affect already-queued draws (the classic GL "forgot to change state"
-    // bug is structurally impossible here).
+    // Rendering intent (GL-style state). State is set inside a pass context,
+    // sticky across passes (unset values carry over), and recorded commands
+    // are immediately final — changing state never retroactively affects
+    // already-drawn draws (the classic GL "forgot to change state" bug is
+    // structurally impossible here).
     struct DrawState {
         bool mDepthTest{true};
         bool mDepthWrite{true};
@@ -51,11 +54,11 @@ namespace moe::neo {
         uint32_t mOffset{0};
     };
 
-    // Render target. Created/destroyed through the renderer;
-    // lifetime is managed by a Cache keyed by RenderTargetHandle (stale handles
-    // resolve to null). The target's color image can be sampled in later
-    // draws (pass mImage.get() to BindImage). Layout transitions for the
-    // attachment/sampling cycle are handled internally.
+    // Render target. Created/destroyed through the renderer; lifetime is
+    // managed by a Cache keyed by RenderTargetHandle (stale handles resolve
+    // to null). The target's color/depth images can be sampled in later
+    // passes (pass mImage/mDepthImage to BindImage). Layout transitions for
+    // the attachment/sampling cycle are handled internally.
     struct RenderTarget {
         std::unique_ptr<rhi::Image> mImage;
         std::unique_ptr<rhi::Image> mDepthImage; // valid when mHasDepth
@@ -71,21 +74,56 @@ namespace moe::neo {
 
     using RenderTargetHandle = Handle<RenderTarget>;
 
-    // Convenience layer over the RHI ("GL layer"): GL-style state calls,
-    // automatic pipeline collection/caching, implicit batching (draws are
-    // queued and recorded sorted at EndFrame), name-addressed push constants
-    // and render targets. No magic: every piece of data flowing into a
-    // shader is written by an explicit call; names/bindings are chosen by the
-    // user (shader and C++ side by side, like GL).
+    // Pass description: a render pass is data. Built once in setup, executed
+    // every frame via renderer.Execute. An invalid mTarget means the
+    // swapchain.
+    struct PassDesc {
+        const char* mName{nullptr};
+        RenderTargetHandle mTarget;
+        rhi::LoadOp mLoadOp{rhi::LoadOp::kClear};
+    };
+
+    class Renderer;
+
+    // Pass-scope rendering context: every state/draw call lives here, so a
+    // draw outside a pass is a compile-time error. Calls operate on the
+    // renderer's per-frame state (sticky across passes).
+    class PassContext {
+    public:
+        void SetState(const DrawState& state);
+        void SetPushConstant(int32_t index, const void* data, size_t size);
+        void BindImage(uint32_t binding, const rhi::Image& image);
+        void BindSampler(uint32_t binding, const rhi::Sampler& sampler);
+        void BindInstanceBuffer(const rhi::Buffer& buffer, uint32_t stride,
+                const InstanceAttribute* attributes, uint32_t attributeCount);
+        void Draw(const UploadedMesh& mesh, const rhi::ShaderProgram& program,
+                rhi::PrimitiveTopology topology = rhi::PrimitiveTopology::kTriangleList,
+                uint32_t instanceCount = 1);
+        void DrawFullscreen(const rhi::ShaderProgram& program);
+
+    private:
+        friend class Renderer;
+        explicit PassContext(Renderer& renderer) : mRenderer(&renderer) {}
+        Renderer* mRenderer{nullptr};
+    };
+
+    // Convenience layer over the RHI ("GL layer", immediate mode): explicit
+    // passes (PassDesc + Execute), GL-style state calls, automatic pipeline
+    // collection/caching, name-addressed push constants, off-screen targets
+    // and manual per-draw texture binding. Commands are recorded immediately
+    // as draws are issued; user code can freely interleave raw RHI commands
+    // between passes (e.g. compute dispatches). Engine-managed barriers are
+    // exposed as thin proxies (ImageBarrier/BufferBarrier/MemoryBarrier) so
+    // the internal layout bookkeeping stays in sync.
     //
     // Usage (inside App's mPostRender callback; no render pass active):
-    //   renderer.BeginFrame(cmd, swapImage, swapchainFormat, clearColor);
-    //   renderer.SetState(state);
-    //   renderer.SetPushConstant(mvpIdx, &mvp);
-    //   renderer.BindImage(0, &textureImage);
-    //   renderer.BindSampler(1, &textureSampler);
-    //   renderer.Draw(mesh, program);
-    //   renderer.EndFrame(); // sorts, records, transitions back to PresentSrc
+    //   PassDesc scene{"scene", {}, rhi::LoadOp::kClear};
+    //   renderer.BeginFrame(cmd, frame, clearColor);
+    //   renderer.Execute(scene, [&](PassContext& pass) {
+    //       pass.SetPushConstant(mvpIdx, &mvp);
+    //       pass.Draw(mesh, program);
+    //   });
+    //   renderer.EndFrame(); // ends any leftover pass, transitions PresentSrc
     class Renderer {
     public:
         Renderer();
@@ -98,59 +136,54 @@ namespace moe::neo {
                 uint32_t width, uint32_t height, std::string& error);
         void Destroy();
 
-        // Begins a frame; the swapchain image must currently be in PresentSrc
-        // layout (as App leaves it after EndRendering). Queues and the
-        // per-frame state are reset here.
-        void BeginFrame(rhi::CommandList& cmd, const rhi::Image& swapchainImage,
-                rhi::Format swapchainFormat, const float clearColor[4]);
+        // Begins a frame; `frame` is the current swapchain image (acquired
+        // via SwapchainImage::Acquire, valid until Release after EndFrame).
+        // The swapchain image must currently be in PresentSrc layout (as App
+        // leaves it after EndRendering). Per-frame state is reset here.
+        void BeginFrame(rhi::CommandList& cmd, const SwapchainImage& frame,
+                const float clearColor[4]);
 
-        // Sorts queued draws (render-target/pipeline-switch minimization),
-        // records them into the command list handed to BeginFrame, and
-        // transitions the swapchain image back to PresentSrc.
+        // Executes one pass: transitions the target, begins rendering (with
+        // the pass's load op), runs the continuation against a PassContext,
+        // then ends the pass. Passes never nest (asserted).
+        template<typename F>
+        void Execute(const PassDesc& desc, F&& body) {
+            BeginPass(desc);
+            PassContext context(*this);
+            std::forward<F>(body)(context);
+            EndPass(desc);
+        }
+
+        // CRTP pass convenience: passes deriving from Pass<T> declare kName,
+        // mTarget, mLoadOp and Execute(PassContext&); this converts them to
+        // the desc+continuation core.
+        template<typename T>
+        void ExecutePass(T& pass) {
+            PassDesc desc{};
+            desc.mName = T::kName;
+            desc.mTarget = pass.mTarget;
+            desc.mLoadOp = pass.mLoadOp;
+            Execute(desc, [&](PassContext& context) { pass.Execute(context); });
+        }
+
+        // Sorts nothing, records nothing: ends any leftover pass and
+        // transitions the swapchain back to PresentSrc if it was drawn to.
         void EndFrame();
-
-        // ---- GL-style state calls (sticky; each Draw snapshots them) ----
-
-        void SetState(const DrawState& state);
-
-        // Selects the render target for subsequent draws ({} = swapchain).
-        void BindTarget(RenderTargetHandle target);
-
-        // Binds a sampled image / sampler to a descriptor binding. The
-        // binding numbers must match what the shader declares (e.g.
-        // [vk::binding(0, 0)] Texture2D ... / [vk::binding(1, 0)] SamplerState
-        // ...). Images that belong to an render target get their layout
-        // transitioned automatically when drawn to / sampled.
-        void BindImage(uint32_t binding, const rhi::Image& image);
-        void BindSampler(uint32_t binding, const rhi::Sampler& sampler);
-
-        // Binds a per-instance vertex buffer (binding 1): instanceCount
-        // records of stride bytes; attributes mirror the shader's instance
-        // inputs. Cleared on BeginFrame; re-bind before instanced draws.
-        void BindInstanceBuffer(const rhi::Buffer& buffer, uint32_t stride,
-                const InstanceAttribute* attributes, uint32_t attributeCount);
-
-        // Writes data into the per-frame push constant value table; the next
-        // Draw() snapshots it. size must equal the reflected member size.
-        bool SetPushConstant(int32_t index, const void* data, size_t size);
 
         // Resolves a push constant member name of `program` to an index for
         // this renderer (-1 when absent). Indexes are cached; look up once in
         // setup, then SetPushConstant every frame.
         int32_t GetPushConstant(const rhi::ShaderProgram& program, const char* name) const;
 
-        // ---- draws ----
-
-        // Queues one draw using the current frame state. The pipeline
-        // (program + vertex layout + state + target format) is collected
-        // lazily and cached. `mesh` must outlive the frame.
-        void Draw(const UploadedMesh& mesh, const rhi::ShaderProgram& program,
-                rhi::PrimitiveTopology topology = rhi::PrimitiveTopology::kTriangleList,
-                uint32_t instanceCount = 1);
-
-        // Full-screen triangle (no vertex buffer; the shader generates
-        // SV_VertexID). Meant for post-processing passes.
-        void DrawFullscreen(const rhi::ShaderProgram& program);
+        // Engine-recognized barriers: thin proxies over the RHI that keep the
+        // internal layout bookkeeping in sync (an ImageBarrier on a render
+        // target's image updates its tracked layout). Raw RHI barriers on
+        // render targets bypass the bookkeeping and are the user's own
+        // responsibility.
+        void ImageBarrier(const rhi::Image& image, rhi::ImageLayout srcLayout,
+                rhi::ImageLayout dstLayout, const rhi::SyncInfo& sync);
+        void BufferBarrier(const rhi::Buffer& buffer, const rhi::SyncInfo& sync);
+        void MemoryBarrier(const rhi::SyncInfo& sync);
 
         // ---- render targets ----
 
@@ -162,7 +195,34 @@ namespace moe::neo {
         const std::string& GetLastError() const;
 
     private:
+        friend class PassContext;
+        void SetStateInternal(const DrawState& state);
+        void BindImageInternal(uint32_t binding, const rhi::Image& image);
+        void BindSamplerInternal(uint32_t binding, const rhi::Sampler& sampler);
+        void BindInstanceBufferInternal(const rhi::Buffer& buffer, uint32_t stride,
+                const InstanceAttribute* attributes, uint32_t attributeCount);
+        void BeginPass(const PassDesc& desc);
+        void EndPass(const PassDesc& desc);
+        // immediate-mode draw entry (called from PassContext)
+        void DrawImmediate(const UploadedMesh* mesh, const rhi::ShaderProgram& program,
+                rhi::PrimitiveTopology topology, uint32_t instanceCount);
+        bool SetPushConstantInternal(int32_t index, const void* data, size_t size);
+        int32_t LookupField(const rhi::ShaderProgram& program, const char* name);
+
         struct Impl;
         std::unique_ptr<Impl> mImpl;
+    };
+
+    // CRTP base for structured passes: derive, declare
+    //   static constexpr const char* kName;
+    //   RenderTargetHandle mTarget;
+    //   rhi::LoadOp mLoadOp;
+    // and implement void Execute(PassContext&). Run through
+    // renderer.ExecutePass(pass).
+    template<typename T>
+    struct Pass {
+        void Run(Renderer& renderer) {
+            renderer.ExecutePass(*static_cast<T*>(this));
+        }
     };
 }// namespace moe::neo

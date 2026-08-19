@@ -322,4 +322,72 @@ namespace moe::neo {
         staging.Destroy();
         return true;
     }
+
+    bool Uploader::UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
+            rhi::Buffer& out, std::string& error) {
+        if (mDevice == nullptr) {
+            error = "Uploader: not initialized";
+            return false;
+        }
+        if (byteCount == 0 || data == nullptr) {
+            error = "UploadData: empty data";
+            return false;
+        }
+
+        rhi::BufferCreateInfo dstInfo{};
+        dstInfo.mSize = byteCount;
+        dstInfo.mUsage = usage | rhi::BufferUsage::kTransferDst;
+        if (!mDevice->CreateBuffer(dstInfo, out)) {
+            error = "UploadData: buffer: " + mDevice->GetLastError();
+            return false;
+        }
+
+        rhi::BufferCreateInfo stagingInfo{};
+        stagingInfo.mSize = byteCount;
+        stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
+        stagingInfo.mCpuVisible = true;
+        rhi::Buffer staging;
+        if (!mDevice->CreateBuffer(stagingInfo, staging)) {
+            error = "UploadData: staging: " + mDevice->GetLastError();
+            out.Destroy();
+            return false;
+        }
+        void* mapped = staging.Map();
+        if (mapped == nullptr) {
+            error = "UploadData: staging map failed";
+            staging.Destroy();
+            out.Destroy();
+            return false;
+        }
+        std::memcpy(mapped, data, byteCount);
+        staging.Unmap();
+
+        rhi::CommandList cmd;
+        if (!mDevice->CreateCommandList(cmd)) {
+            error = "UploadData: command list creation failed";
+            staging.Destroy();
+            out.Destroy();
+            return false;
+        }
+        cmd.Begin();
+        cmd.CopyBuffer(staging, out, byteCount, 0, 0);
+        rhi::SyncInfo sync{};
+        sync.mSrcStage = rhi::PipelineStage::kTransfer;
+        sync.mSrcAccess = rhi::Access::kTransferWrite;
+        sync.mDstStage = rhi::PipelineStage::kVertexShader;
+        sync.mDstAccess = rhi::Access::kShaderRead;
+        cmd.BufferBarrier(out, sync);
+        cmd.End();
+        if (!mDevice->Submit(cmd, true)) {
+            error = "UploadData: submit failed: " + mDevice->GetLastError();
+            cmd.Destroy();
+            staging.Destroy();
+            out.Destroy();
+            return false;
+        }
+        cmd.Destroy();
+        staging.Destroy();
+        moe::Logger::info("Uploaded buffer ({} bytes)", byteCount);
+        return true;
+    }
 }// namespace moe::neo

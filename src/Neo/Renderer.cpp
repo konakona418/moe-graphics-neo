@@ -14,7 +14,6 @@
 namespace moe::neo {
     namespace {
         constexpr uint32_t kMaxPushConstantBytes = 256;
-        constexpr uint32_t kMaxDrawsPerFrame = 1024;
         constexpr uint32_t kMaxInstanceAttributes = 16;
 
         uint32_t FormatSize(rhi::Format format) {
@@ -41,17 +40,21 @@ namespace moe::neo {
         uint32_t mHeight{0};
         std::string mLastError;
 
-        // push constant name registry (lookup-once, then set by index)
+        // push constant name registry (lookup-once, then set by index). Each
+        // field keeps its own value: different programs may place fields at
+        // the same push constant offset, so values must not share a byte
+        // space. Replay writes per field (per declared range of the program).
         struct FieldReg {
             const rhi::ShaderProgram* mProgram{nullptr};
             std::string mName;
             uint32_t mOffset{0};
             uint32_t mSize{0};
+            std::vector<uint8_t> mValue;
         };
         mutable std::vector<FieldReg> mFields;
 
-        // ---- per-frame GL-style state (reset in BeginFrame; each Draw
-        // snapshots what it sees) ----
+        // ---- per-frame GL-style state (reset in BeginFrame; drawn commands
+        // are recorded immediately, so later changes never affect them) ----
 
         struct ImageBinding {
             uint32_t mBinding{0};
@@ -76,49 +79,39 @@ namespace moe::neo {
         std::array<SamplerBinding, kMaxTextureBindings> mSamplers{};
         uint32_t mSamplerCount{0};
         InstanceBind mInstance;
-        std::array<uint8_t, kMaxPushConstantBytes> mTable{};
-        uint32_t mTableSize{0};
+        // (the per-frame value table was replaced by per-field values:
+        // different programs may reuse the same push constant offsets)
 
         // frame state
         rhi::CommandList* mCmd{nullptr};
-        // Borrowed swapchain image: owned by the caller, valid from
-        // BeginFrame to EndFrame (both inside the same App callback scope).
+        // Borrowed swapchain image: owned by the caller's SwapchainImage
+        // object, valid from BeginFrame to EndFrame (both inside the same App
+        // callback scope).
         const rhi::Image* mSwapchainImage{nullptr};
         rhi::Format mSwapchainFormat{rhi::Format::kUndefined};
+        uint32_t mFrameWidth{0};
+        uint32_t mFrameHeight{0};
         float mClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         bool mDepthReady{false};
 
+        // immediate-mode tracking
+        bool mPassOpen{false};
+        const char* mPassName{nullptr};
+        RenderTarget* mCurrentTarget{nullptr};
+        uint64_t mCurrentPipelineHash{0};
+        bool mSwapchainReady{false}; // PresentSrc -> ColorAttachment done
+        bool mSwapchainDrawn{false};
+
         Cache<RenderTarget> mTargets;
 
-        // Descriptor sets created during EndFrame recording; freed at the
-        // next BeginFrame (queue is serial, so in-flight usage has finished).
+        // Descriptor sets created during recording; freed at the next
+        // BeginFrame (queue is serial, so in-flight usage has finished).
         std::vector<std::unique_ptr<rhi::DescriptorSet>> mFrameSets;
 
         // per-second frame statistics
         std::chrono::steady_clock::time_point mStatsTime{};
         uint32_t mStatsFrames{0};
         uint64_t mStatsDraws{0};
-        uint32_t mStatsPasses{0};
-        uint32_t mStatsLastDraws{0};
-
-        struct DrawCmd {
-            const rhi::ShaderProgram* mProgram{nullptr};
-            const UploadedMesh* mMesh{nullptr}; // null = fullscreen
-            rhi::PrimitiveTopology mTopology{rhi::PrimitiveTopology::kTriangleList};
-            uint32_t mInstanceCount{1};
-            DrawState mState;
-            RenderTargetHandle mTarget;
-            RenderTarget* mTargetPtr{nullptr};
-            std::array<ImageBinding, kMaxTextureBindings> mImages{};
-            uint32_t mImageCount{0};
-            std::array<SamplerBinding, kMaxTextureBindings> mSamplers{};
-            uint32_t mSamplerCount{0};
-            InstanceBind mInstance;
-            std::array<uint8_t, kMaxPushConstantBytes> mTable{};
-            uint32_t mTableSize{0};
-            uint64_t mPipelineHash{0};
-        };
-        std::vector<DrawCmd> mDraws;
 
         RenderTarget* ResolveTarget(RenderTargetHandle handle) {
             return handle.IsValid() ? mTargets.Get(handle) : nullptr;
@@ -150,82 +143,81 @@ namespace moe::neo {
             return -1;
         }
 
-        // Builds the RHI pipeline state for one queued draw: vertex layout
-        // from the uploaded mesh (binding 0) + explicit instance attributes
-        // (binding 1), state from the draw's snapshot, formats from the
-        // render target.
-        rhi::GraphicsPipelineState BuildPipelineState(const DrawCmd& cmd) {
+        // Builds the RHI pipeline state for the current frame state: vertex
+        // layout from the uploaded mesh (binding 0) + explicit instance
+        // attributes (binding 1, only when instanced), state from mState,
+        // formats from the target.
+        rhi::GraphicsPipelineState BuildPipelineState(const UploadedMesh* mesh,
+                const rhi::ShaderProgram& program, rhi::PrimitiveTopology topology,
+                bool useInstancing) {
             rhi::GraphicsPipelineState state{};
-            state.mProgram = cmd.mProgram;
-            state.mTopology = cmd.mTopology;
+            state.mProgram = &program;
+            state.mTopology = topology;
 
             state.mColorFormatCount = 1;
             state.mColorFormats[0] =
-                    cmd.mTargetPtr != nullptr ? cmd.mTargetPtr->mFormat : mSwapchainFormat;
+                    mTargetPtr != nullptr ? mTargetPtr->mFormat : mSwapchainFormat;
             state.mDepthFormat = rhi::Format::kD32Float;
 
             state.mBlendAttachmentCount = 1;
-            state.mBlendAttachments[0].mBlendEnabled = cmd.mState.mBlendEnabled;
-            state.mBlendAttachments[0].mSrcColor = cmd.mState.mBlendSrcColor;
-            state.mBlendAttachments[0].mDstColor = cmd.mState.mBlendDstColor;
-            state.mBlendAttachments[0].mColorOp = cmd.mState.mBlendColorOp;
-            state.mBlendAttachments[0].mSrcAlpha = cmd.mState.mBlendSrcAlpha;
-            state.mBlendAttachments[0].mDstAlpha = cmd.mState.mBlendDstAlpha;
-            state.mBlendAttachments[0].mAlphaOp = cmd.mState.mBlendAlphaOp;
+            state.mBlendAttachments[0].mBlendEnabled = mState.mBlendEnabled;
+            state.mBlendAttachments[0].mSrcColor = mState.mBlendSrcColor;
+            state.mBlendAttachments[0].mDstColor = mState.mBlendDstColor;
+            state.mBlendAttachments[0].mColorOp = mState.mBlendColorOp;
+            state.mBlendAttachments[0].mSrcAlpha = mState.mBlendSrcAlpha;
+            state.mBlendAttachments[0].mDstAlpha = mState.mBlendDstAlpha;
+            state.mBlendAttachments[0].mAlphaOp = mState.mBlendAlphaOp;
 
-            state.mRaster.mCullMode = cmd.mState.mCullMode;
-            state.mRaster.mFrontFace = cmd.mState.mFrontFace;
-            state.mRaster.mPolygonMode = cmd.mState.mPolygonMode;
+            state.mRaster.mCullMode = mState.mCullMode;
+            state.mRaster.mFrontFace = mState.mFrontFace;
+            state.mRaster.mPolygonMode = mState.mPolygonMode;
+            if (mesh == nullptr) {
+                // Fullscreen passes: the fullscreen triangle's winding is
+                // fixed by the generated UV formula (clockwise in window
+                // space), so culling would always discard it. Ignore it.
+                state.mRaster.mCullMode = rhi::CullMode::kNone;
+            }
 
-            state.mDepth.mTestEnable = cmd.mState.mDepthTest;
-            state.mDepth.mWriteEnable = cmd.mState.mDepthWrite;
-            state.mDepth.mCompareOp = cmd.mState.mDepthCompareOp;
+            state.mDepth.mTestEnable = mState.mDepthTest;
+            state.mDepth.mWriteEnable = mState.mDepthWrite;
+            state.mDepth.mCompareOp = mState.mDepthCompareOp;
 
             uint32_t attributeCount = 0;
-            if (cmd.mMesh != nullptr) {
-                const UploadedMesh& mesh = *cmd.mMesh;
+            if (mesh != nullptr) {
                 state.mVertexBindingCount = 1;
-                state.mVertexBindings[0] = {0, mesh.mVertexStride, false};
-                state.mVertexAttributes[attributeCount++] = {0, 0, rhi::Format::kR32G32B32Float, mesh.mPositionOffset};
-                if (mesh.HasNormals()) {
-                    state.mVertexAttributes[attributeCount++] = {1, 0, rhi::Format::kR32G32B32Float, mesh.mNormalOffset};
+                state.mVertexBindings[0] = {0, mesh->mVertexStride, false};
+                // attribute locations are assigned by channel presence, in
+                // shader-idiomatic order (position, normal, uv, color) — a
+                // mesh without normals puts uv at location 1, etc. (The
+                // location is captured before the index increments: the
+                // evaluation order of `arr[i++] = {i, ...}` is not portable.)
+                const uint32_t positionLocation = attributeCount;
+                state.mVertexAttributes[attributeCount++] = {positionLocation, 0, rhi::Format::kR32G32B32Float, mesh->mPositionOffset};
+                if (mesh->HasNormals()) {
+                    const uint32_t normalLocation = attributeCount;
+                    state.mVertexAttributes[attributeCount++] = {normalLocation, 0, rhi::Format::kR32G32B32Float, mesh->mNormalOffset};
                 }
-                if (mesh.HasUvs()) {
-                    state.mVertexAttributes[attributeCount++] = {2, 0, rhi::Format::kR32G32Float, mesh.mUvOffset};
+                if (mesh->HasUvs()) {
+                    const uint32_t uvLocation = attributeCount;
+                    state.mVertexAttributes[attributeCount++] = {uvLocation, 0, rhi::Format::kR32G32Float, mesh->mUvOffset};
                 }
-                if (mesh.HasColors()) {
-                    state.mVertexAttributes[attributeCount++] = {3, 0, rhi::Format::kR8G8B8A8Unorm, mesh.mColorOffset};
+                if (mesh->HasColors()) {
+                    const uint32_t colorLocation = attributeCount;
+                    state.mVertexAttributes[attributeCount++] = {colorLocation, 0, rhi::Format::kR8G8B8A8Unorm, mesh->mColorOffset};
                 }
             }
 
-            if (cmd.mInstance.mBuffer != nullptr && cmd.mInstance.mAttributeCount > 0) {
+            if (useInstancing && mInstance.mBuffer != nullptr && mInstance.mAttributeCount > 0) {
                 state.mVertexBindingCount = 2;
-                state.mVertexBindings[1] = {1, cmd.mInstance.mStride, true};
-                for (uint32_t i = 0; i < cmd.mInstance.mAttributeCount; ++i) {
-                    const InstanceAttribute& attr = cmd.mInstance.mAttributes[i];
+                state.mVertexBindings[1] = {1, mInstance.mStride, true};
+                for (uint32_t i = 0; i < mInstance.mAttributeCount; ++i) {
+                    const InstanceAttribute& attr = mInstance.mAttributes[i];
                     state.mVertexAttributes[attributeCount++] = {attr.mLocation, 1, attr.mFormat, attr.mOffset};
                 }
             }
 
             state.mVertexAttributeCount = attributeCount;
             return state;
-        }
-
-        // Shared queueing tail for Draw/DrawFullscreen: snapshot the frame
-        // state into the command, resolve the pipeline, enqueue.
-        static void QueueDraw(Impl& impl, DrawCmd& cmd) {
-            if (impl.mDraws.size() >= kMaxDrawsPerFrame) {
-                impl.mLastError = "Draw: per-frame draw limit exceeded";
-                return;
-            }
-            rhi::GraphicsPipeline pipeline;
-            const rhi::GraphicsPipelineState state = impl.BuildPipelineState(cmd);
-            if (!impl.mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
-                impl.mLastError = "Draw: pipeline: " + impl.mDevice->GetLastError();
-                return;
-            }
-            cmd.mPipelineHash = state.GetHash();
-            impl.mDraws.push_back(std::move(cmd));
         }
     };
 
@@ -267,7 +259,6 @@ namespace moe::neo {
             set->Destroy();
         }
         mImpl->mFrameSets.clear();
-        // destroy live render targets before the cache clears the slots
         mImpl->mTargets.ForEach([](RenderTarget& target) {
             if (target.mDepthImage) {
                 target.mDepthImage->Destroy();
@@ -282,36 +273,75 @@ namespace moe::neo {
         moe::Logger::info("Renderer destroyed");
     }
 
-    void Renderer::BeginFrame(rhi::CommandList& cmd, const rhi::Image& swapchainImage,
-            rhi::Format swapchainFormat, const float clearColor[4]) {
+    void Renderer::BeginFrame(rhi::CommandList& cmd, const SwapchainImage& frame,
+            const float clearColor[4]) {
         for (auto& set : mImpl->mFrameSets) {
             set->Destroy();
         }
         mImpl->mFrameSets.clear();
         mImpl->mCmd = &cmd;
-        mImpl->mSwapchainImage = &swapchainImage;
-        mImpl->mSwapchainFormat = swapchainFormat;
+        mImpl->mSwapchainImage = &frame.GetImage();
+        mImpl->mSwapchainFormat = frame.GetFormat();
+        mImpl->mFrameWidth = frame.GetWidth();
+        mImpl->mFrameHeight = frame.GetHeight();
         std::memcpy(mImpl->mClearColor, clearColor, sizeof(float) * 4);
-        mImpl->mDraws.clear();
         mImpl->mState = DrawState{};
         mImpl->mTarget = {};
         mImpl->mTargetPtr = nullptr;
         mImpl->mImageCount = 0;
         mImpl->mSamplerCount = 0;
         mImpl->mInstance = Impl::InstanceBind{};
-        mImpl->mTableSize = 0;
+        mImpl->mPassOpen = false;
+        mImpl->mPassName = nullptr;
+        mImpl->mCurrentTarget = nullptr;
+        mImpl->mCurrentPipelineHash = 0;
+        mImpl->mSwapchainReady = false;
+        mImpl->mSwapchainDrawn = false;
     }
 
-    void Renderer::SetState(const DrawState& state) {
+    void Renderer::EndFrame() {
+        Impl& impl = *mImpl;
+        rhi::CommandList& cmd = *impl.mCmd;
+
+        if (impl.mPassOpen) {
+            moe::Logger::warn("Renderer: pass '{}' left open at EndFrame; closing it", impl.mPassName);
+            cmd.EndRendering();
+            impl.mPassOpen = false;
+        }
+
+        if (impl.mSwapchainDrawn) {
+            rhi::SyncInfo sync{};
+            sync.mSrcStage = rhi::PipelineStage::kColorAttachmentOutput;
+            sync.mSrcAccess = rhi::Access::kColorAttachmentWrite;
+            sync.mDstStage = rhi::PipelineStage::kBottomOfPipe;
+            sync.mDstAccess = rhi::Access::kNone;
+            cmd.ImageBarrier(*impl.mSwapchainImage, rhi::ImageLayout::kColorAttachment,
+                    rhi::ImageLayout::kPresentSrc, sync);
+        }
+
+        // per-second stats (avoids log flooding while keeping visibility)
+        impl.mStatsFrames += 1;
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now - impl.mStatsTime).count();
+        if (elapsed >= 1.0) {
+            const double fps = static_cast<double>(impl.mStatsFrames) / elapsed;
+            const double avgDraws = static_cast<double>(impl.mStatsDraws) / impl.mStatsFrames;
+            moe::Logger::info("Renderer frame stats: {:.1f} fps, {:.0f} avg draws/frame, "
+                    "{} cached pipelines",
+                    fps, avgDraws, impl.mCache->GetNodeCount());
+            impl.mStatsTime = now;
+            impl.mStatsFrames = 0;
+            impl.mStatsDraws = 0;
+        }
+    }
+
+    // ---- GL-style state (internal; PassContext is the public entry) ----
+
+    void Renderer::SetStateInternal(const DrawState& state) {
         mImpl->mState = state;
     }
 
-    void Renderer::BindTarget(RenderTargetHandle target) {
-        mImpl->mTarget = target;
-        mImpl->mTargetPtr = mImpl->ResolveTarget(target);
-    }
-
-    void Renderer::BindImage(uint32_t binding, const rhi::Image& image) {
+    void Renderer::BindImageInternal(uint32_t binding, const rhi::Image& image) {
         for (uint32_t i = 0; i < mImpl->mImageCount; ++i) {
             if (mImpl->mImages[i].mBinding == binding) {
                 mImpl->mImages[i].mImage = &image;
@@ -325,7 +355,7 @@ namespace moe::neo {
         mImpl->mImages[mImpl->mImageCount++] = {binding, &image};
     }
 
-    void Renderer::BindSampler(uint32_t binding, const rhi::Sampler& sampler) {
+    void Renderer::BindSamplerInternal(uint32_t binding, const rhi::Sampler& sampler) {
         for (uint32_t i = 0; i < mImpl->mSamplerCount; ++i) {
             if (mImpl->mSamplers[i].mBinding == binding) {
                 mImpl->mSamplers[i].mSampler = &sampler;
@@ -339,7 +369,7 @@ namespace moe::neo {
         mImpl->mSamplers[mImpl->mSamplerCount++] = {binding, &sampler};
     }
 
-    void Renderer::BindInstanceBuffer(const rhi::Buffer& buffer, uint32_t stride,
+    void Renderer::BindInstanceBufferInternal(const rhi::Buffer& buffer, uint32_t stride,
             const InstanceAttribute* attributes, uint32_t attributeCount) {
         if (attributeCount > kMaxInstanceAttributes) {
             mImpl->mLastError = "BindInstanceBuffer: too many attributes";
@@ -357,25 +387,53 @@ namespace moe::neo {
         return mImpl->LookupField(program, name);
     }
 
-    bool Renderer::SetPushConstant(int32_t index, const void* data, size_t size) {
+    bool Renderer::SetPushConstantInternal(int32_t index, const void* data, size_t size) {
         if (index < 0 || static_cast<size_t>(index) >= mImpl->mFields.size()) {
             mImpl->mLastError = "SetPushConstant: invalid index";
             return false;
         }
-        const auto& field = mImpl->mFields[static_cast<size_t>(index)];
+        auto& field = mImpl->mFields[static_cast<size_t>(index)];
         if (size != field.mSize) {
             mImpl->mLastError = "SetPushConstant: size mismatch (shader expects " +
                     std::to_string(field.mSize) + ", got " + std::to_string(size) + ")";
             return false;
         }
-        if (field.mOffset + field.mSize > kMaxPushConstantBytes) {
-            mImpl->mLastError = "SetPushConstant: exceeds the value table";
-            return false;
-        }
-        std::memcpy(mImpl->mTable.data() + field.mOffset, data, size);
-        mImpl->mTableSize = std::max(mImpl->mTableSize, field.mOffset + static_cast<uint32_t>(size));
+        field.mValue.assign(static_cast<const uint8_t*>(data),
+                static_cast<const uint8_t*>(data) + size);
         return true;
     }
+
+    // ---- engine-recognized barriers (bookkeeping stays in sync) ----
+
+    void Renderer::ImageBarrier(const rhi::Image& image, rhi::ImageLayout srcLayout,
+            rhi::ImageLayout dstLayout, const rhi::SyncInfo& sync) {
+        if (mImpl->mCmd == nullptr) {
+            return;
+        }
+        mImpl->mCmd->ImageBarrier(image, srcLayout, dstLayout, sync);
+        mImpl->mTargets.ForEach([&](RenderTarget& target) {
+            if (target.mImage.get() == &image) {
+                target.mColorLayout = dstLayout;
+            }
+            if (target.mDepthImage.get() == &image) {
+                target.mDepthLayout = dstLayout;
+            }
+        });
+    }
+
+    void Renderer::BufferBarrier(const rhi::Buffer& buffer, const rhi::SyncInfo& sync) {
+        if (mImpl->mCmd != nullptr) {
+            mImpl->mCmd->BufferBarrier(buffer, sync);
+        }
+    }
+
+    void Renderer::MemoryBarrier(const rhi::SyncInfo& sync) {
+        if (mImpl->mCmd != nullptr) {
+            mImpl->mCmd->MemoryBarrier(sync);
+        }
+    }
+
+    // ---- render targets ----
 
     RenderTargetHandle Renderer::CreateRenderTarget(uint32_t width, uint32_t height,
             rhi::Format format, bool withDepth, std::string& error) {
@@ -396,7 +454,8 @@ namespace moe::neo {
         colorInfo.mWidth = width;
         colorInfo.mHeight = height;
         colorInfo.mFormat = format;
-        colorInfo.mUsage = rhi::ImageUsage::kColorAttachment | rhi::ImageUsage::kSampled;
+        colorInfo.mUsage = rhi::ImageUsage::kColorAttachment | rhi::ImageUsage::kSampled
+                | rhi::ImageUsage::kTransferSrc;
         if (!mImpl->mDevice->CreateImage(colorInfo, *target.mImage)) {
             error = "CreateRenderTarget: color image: " + mImpl->mDevice->GetLastError();
             return {};
@@ -407,7 +466,7 @@ namespace moe::neo {
             depthInfo.mWidth = width;
             depthInfo.mHeight = height;
             depthInfo.mFormat = rhi::Format::kD32Float;
-            depthInfo.mUsage = rhi::ImageUsage::kDepthAttachment;
+            depthInfo.mUsage = rhi::ImageUsage::kDepthAttachment | rhi::ImageUsage::kSampled;
             if (!mImpl->mDevice->CreateImage(depthInfo, *target.mDepthImage)) {
                 error = "CreateRenderTarget: depth image: " + mImpl->mDevice->GetLastError();
                 target.mImage->Destroy();
@@ -420,7 +479,8 @@ namespace moe::neo {
         return handle;
     }
 
-    void Renderer::DestroyRenderTarget(RenderTargetHandle handle) {        RenderTarget* target = mImpl->mTargets.Get(handle);
+    void Renderer::DestroyRenderTarget(RenderTargetHandle handle) {
+        RenderTarget* target = mImpl->mTargets.Get(handle);
         if (target == nullptr) {
             mImpl->mLastError = "DestroyRenderTarget: stale handle";
             return;
@@ -441,256 +501,249 @@ namespace moe::neo {
         return mImpl->mTargets.Get(handle);
     }
 
-    void Renderer::Draw(const UploadedMesh& mesh, const rhi::ShaderProgram& program,
-            rhi::PrimitiveTopology topology, uint32_t instanceCount) {
-        Impl::DrawCmd cmd;
-        cmd.mProgram = &program;
-        cmd.mMesh = &mesh;
-        cmd.mTopology = topology;
-        cmd.mInstanceCount = instanceCount;
-        cmd.mState = mImpl->mState;
-        cmd.mTarget = mImpl->mTarget;
-        cmd.mTargetPtr = mImpl->mTargetPtr;
-        cmd.mImages = mImpl->mImages;
-        cmd.mImageCount = mImpl->mImageCount;
-        cmd.mSamplers = mImpl->mSamplers;
-        cmd.mSamplerCount = mImpl->mSamplerCount;
-        cmd.mInstance = mImpl->mInstance;
-        cmd.mTable = mImpl->mTable;
-        cmd.mTableSize = mImpl->mTableSize;
-        Impl::QueueDraw(*mImpl, cmd);
-    }
+    // ---- passes ----
 
-    void Renderer::DrawFullscreen(const rhi::ShaderProgram& program) {
-        Impl::DrawCmd cmd;
-        cmd.mProgram = &program;
-        cmd.mState = mImpl->mState;
-        cmd.mTarget = mImpl->mTarget;
-        cmd.mTargetPtr = mImpl->mTargetPtr;
-        cmd.mImages = mImpl->mImages;
-        cmd.mImageCount = mImpl->mImageCount;
-        cmd.mSamplers = mImpl->mSamplers;
-        cmd.mSamplerCount = mImpl->mSamplerCount;
-        cmd.mTable = mImpl->mTable;
-        cmd.mTableSize = mImpl->mTableSize;
-        Impl::QueueDraw(*mImpl, cmd);
-    }
+    void Renderer::BeginPass(const PassDesc& desc) {
+        Impl& impl = *mImpl;
+        rhi::CommandList& cmd = *impl.mCmd;
 
-    void Renderer::EndFrame() {
-        rhi::CommandList& cmd = *mImpl->mCmd;
-
-        // swapchain: PresentSrc (left by App's EndRendering) -> color attachment
-        rhi::SyncInfo sync{};
-        sync.mSrcStage = rhi::PipelineStage::kBottomOfPipe;
-        sync.mSrcAccess = rhi::Access::kNone;
-        sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
-        sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
-        cmd.ImageBarrier(*mImpl->mSwapchainImage, rhi::ImageLayout::kPresentSrc,
-                rhi::ImageLayout::kColorAttachment, sync);
-
-        // depth: first frame transitions undefined -> depth attachment
-        if (!mImpl->mDepthReady) {
-            sync.mSrcStage = rhi::PipelineStage::kTopOfPipe;
-            sync.mSrcAccess = rhi::Access::kNone;
-            sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
-            sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
-            cmd.ImageBarrier(mImpl->mDepthImage, rhi::ImageLayout::kUndefined,
-                    rhi::ImageLayout::kDepthStencilAttachment, sync);
-            mImpl->mDepthReady = true;
+        if (impl.mPassOpen) {
+            moe::Logger::warn("Renderer: pass '{}' still open when '{}' begins; closing it",
+                    impl.mPassName != nullptr ? impl.mPassName : "?", desc.mName);
+            cmd.EndRendering();
+            impl.mPassOpen = false;
         }
 
-        // sort: render target first (fewer pass switches), then pipeline hash
-        auto targetKey = [](const Impl::DrawCmd& d) {
-            return d.mTarget.IsValid() ? d.mTarget.mIndex : UINT32_MAX;
-        };
-        std::stable_sort(mImpl->mDraws.begin(), mImpl->mDraws.end(),
-                [&targetKey](const Impl::DrawCmd& a, const Impl::DrawCmd& b) {
-                    const uint32_t ta = targetKey(a);
-                    const uint32_t tb = targetKey(b);
-                    if (ta != tb) {
-                        return ta < tb;
-                    }
-                    return a.mPipelineHash < b.mPipelineHash;
-                });
+        RenderTarget* target = impl.ResolveTarget(desc.mTarget);
+        impl.mCurrentTarget = target;
+        impl.mTarget = desc.mTarget;
+        impl.mTargetPtr = target;
+        impl.mPassName = desc.mName != nullptr ? desc.mName : "?";
+        impl.mCurrentPipelineHash = 0; // pipelines are rebound per pass
 
-        RenderTarget* activeTarget = nullptr;
-        bool passOpen = false;
-        for (const auto& draw : mImpl->mDraws) {
-            if (!passOpen || draw.mTargetPtr != activeTarget) {
-                if (passOpen) {
-                    cmd.EndRendering();
-                    passOpen = false;
-                }
-                activeTarget = draw.mTargetPtr;
-
-                // --- pass-external barriers ---
-                // 1) sampled textures: any render target being read moves
-                //    to ShaderReadOnly (a barrier right before the pass waits
-                //    for the previous pass that wrote it)
-                for (uint32_t i = 0; i < draw.mImageCount; ++i) {
-                    const rhi::Image* tex = draw.mImages[i].mImage;
-                    RenderTarget* owner = nullptr;
-                    mImpl->mTargets.ForEach([&](RenderTarget& t) {
-                        if (owner == nullptr && t.mImage.get() == tex) {
-                            owner = &t;
-                        }
-                    });
-                    if (owner == nullptr || owner->mColorLayout == rhi::ImageLayout::kShaderReadOnly) {
-                        continue;
-                    }
-                    sync.mSrcStage = owner->mColorLayout == rhi::ImageLayout::kColorAttachment
-                            ? rhi::PipelineStage::kColorAttachmentOutput
-                            : rhi::PipelineStage::kTopOfPipe;
-                    sync.mSrcAccess = owner->mColorLayout == rhi::ImageLayout::kColorAttachment
-                            ? rhi::Access::kColorAttachmentWrite
-                            : rhi::Access::kNone;
-                    sync.mDstStage = rhi::PipelineStage::kFragmentShader;
-                    sync.mDstAccess = rhi::Access::kShaderRead;
-                    cmd.ImageBarrier(*owner->mImage, owner->mColorLayout,
-                            rhi::ImageLayout::kShaderReadOnly, sync);
-                    owner->mColorLayout = rhi::ImageLayout::kShaderReadOnly;
-                }
-
-                // 2) the target itself must be in ColorAttachment
-                if (activeTarget != nullptr) {
-                    if (activeTarget->mColorLayout != rhi::ImageLayout::kColorAttachment) {
-                        sync.mSrcStage = activeTarget->mColorLayout == rhi::ImageLayout::kShaderReadOnly
-                                ? rhi::PipelineStage::kFragmentShader
-                                : rhi::PipelineStage::kTopOfPipe;
-                        sync.mSrcAccess = activeTarget->mColorLayout == rhi::ImageLayout::kShaderReadOnly
-                                ? rhi::Access::kShaderRead
-                                : rhi::Access::kNone;
-                        sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
-                        sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
-                        cmd.ImageBarrier(*activeTarget->mImage, activeTarget->mColorLayout,
-                                rhi::ImageLayout::kColorAttachment, sync);
-                        activeTarget->mColorLayout = rhi::ImageLayout::kColorAttachment;
-                    }
-                    if (activeTarget->mHasDepth && activeTarget->mDepthLayout == rhi::ImageLayout::kUndefined) {
-                        sync.mSrcStage = rhi::PipelineStage::kTopOfPipe;
-                        sync.mSrcAccess = rhi::Access::kNone;
-                        sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
-                        sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
-                        cmd.ImageBarrier(*activeTarget->mDepthImage, rhi::ImageLayout::kUndefined,
-                                rhi::ImageLayout::kDepthStencilAttachment, sync);
-                        activeTarget->mDepthLayout = rhi::ImageLayout::kDepthStencilAttachment;
-                    }
-                }
-
-                // --- begin the pass ---
-                if (activeTarget != nullptr) {
-                    cmd.BeginRendering(*activeTarget->mImage, mImpl->mClearColor,
-                            activeTarget->mHasDepth ? activeTarget->mDepthImage.get() : nullptr,
-                            1.0f, rhi::LoadOp::kClear);
-                    cmd.SetViewport(activeTarget->mWidth, activeTarget->mHeight);
-                } else {
-                    cmd.BeginRendering(*mImpl->mSwapchainImage, mImpl->mClearColor,
-                            &mImpl->mDepthImage, 1.0f, rhi::LoadOp::kClear);
-                    cmd.SetViewport(mImpl->mWidth, mImpl->mHeight);
-                }
-                passOpen = true;
+        rhi::SyncInfo sync{};
+        if (target != nullptr) {
+            // target image: ShaderReadOnly/Undefined -> ColorAttachment (pass-external)
+            if (target->mColorLayout != rhi::ImageLayout::kColorAttachment) {
+                sync.mSrcStage = target->mColorLayout == rhi::ImageLayout::kShaderReadOnly
+                        ? rhi::PipelineStage::kFragmentShader
+                        : rhi::PipelineStage::kTopOfPipe;
+                sync.mSrcAccess = target->mColorLayout == rhi::ImageLayout::kShaderReadOnly
+                        ? rhi::Access::kShaderRead
+                        : rhi::Access::kNone;
+                sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
+                sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
+                cmd.ImageBarrier(*target->mImage, target->mColorLayout,
+                        rhi::ImageLayout::kColorAttachment, sync);
+                target->mColorLayout = rhi::ImageLayout::kColorAttachment;
             }
+            if (target->mHasDepth) {
+                const rhi::ImageLayout depthLayout = target->mDepthLayout;
+                if (depthLayout != rhi::ImageLayout::kDepthStencilAttachment) {
+                    sync.mSrcStage = depthLayout == rhi::ImageLayout::kShaderReadOnly
+                            ? rhi::PipelineStage::kFragmentShader
+                            : rhi::PipelineStage::kTopOfPipe;
+                    sync.mSrcAccess = depthLayout == rhi::ImageLayout::kShaderReadOnly
+                            ? rhi::Access::kDepthStencilAttachmentRead
+                            : rhi::Access::kNone;
+                    sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
+                    sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
+                    cmd.ImageBarrier(*target->mDepthImage, depthLayout,
+                            rhi::ImageLayout::kDepthStencilAttachment, sync);
+                    target->mDepthLayout = rhi::ImageLayout::kDepthStencilAttachment;
+                }
+            }
+            cmd.BeginRendering(*target->mImage, impl.mClearColor,
+                    target->mHasDepth ? target->mDepthImage.get() : nullptr,
+                    1.0f, desc.mLoadOp);
+            cmd.SetViewport(target->mWidth, target->mHeight);
+        } else {
+            // swapchain: PresentSrc -> ColorAttachment (first use this frame)
+            if (!impl.mSwapchainReady) {
+                sync.mSrcStage = rhi::PipelineStage::kBottomOfPipe;
+                sync.mSrcAccess = rhi::Access::kNone;
+                sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
+                sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
+                cmd.ImageBarrier(*impl.mSwapchainImage, rhi::ImageLayout::kPresentSrc,
+                        rhi::ImageLayout::kColorAttachment, sync);
+                impl.mSwapchainReady = true;
+            }
+            // main depth: first frame transitions undefined -> depth attachment
+            if (!impl.mDepthReady) {
+                sync.mSrcStage = rhi::PipelineStage::kTopOfPipe;
+                sync.mSrcAccess = rhi::Access::kNone;
+                sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
+                sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
+                cmd.ImageBarrier(impl.mDepthImage, rhi::ImageLayout::kUndefined,
+                        rhi::ImageLayout::kDepthStencilAttachment, sync);
+                impl.mDepthReady = true;
+            }
+            cmd.BeginRendering(*impl.mSwapchainImage, impl.mClearColor,
+                    &impl.mDepthImage, 1.0f, desc.mLoadOp);
+            cmd.SetViewport(impl.mFrameWidth, impl.mFrameHeight);
+            impl.mSwapchainDrawn = true;
+        }
+        impl.mPassOpen = true;
+        moe::Logger::debug("Renderer pass '{}' begin ({})",
+                impl.mPassName, target != nullptr ? "render target" : "swapchain");
+    }
 
-            // --- per-draw recording ---
+    void Renderer::EndPass(const PassDesc& desc) {
+        Impl& impl = *mImpl;
+        if (!impl.mPassOpen) {
+            impl.mLastError = "EndPass: no active pass";
+            return;
+        }
+        impl.mCmd->EndRendering();
+        impl.mPassOpen = false;
+        moe::Logger::debug("Renderer pass '{}' end", impl.mPassName);
+
+        // Deferred sampling transition (vulkan 1.3 dynamic rendering forbids
+        // pipeline barriers inside a render pass): immediately after the pass,
+        // move the target's color (and depth, for depth sampling like clouds)
+        // to their read layouts, so later passes can sample them without any
+        // barrier. The next pass that draws to it transitions it back in
+        // BeginPass.
+        if (impl.mCurrentTarget != nullptr) {
+            RenderTarget* target = impl.mCurrentTarget;
+            rhi::CommandList& cmd = *impl.mCmd;
+            rhi::SyncInfo sync{};
+            if (target->mColorLayout != rhi::ImageLayout::kShaderReadOnly) {
+                sync.mSrcStage = rhi::PipelineStage::kColorAttachmentOutput;
+                sync.mSrcAccess = rhi::Access::kColorAttachmentWrite;
+                sync.mDstStage = rhi::PipelineStage::kFragmentShader;
+                sync.mDstAccess = rhi::Access::kShaderRead;
+                cmd.ImageBarrier(*target->mImage, rhi::ImageLayout::kColorAttachment,
+                        rhi::ImageLayout::kShaderReadOnly, sync);
+                target->mColorLayout = rhi::ImageLayout::kShaderReadOnly;
+            }
+            if (target->mHasDepth && target->mDepthLayout != rhi::ImageLayout::kShaderReadOnly) {
+                sync.mSrcStage = rhi::PipelineStage::kEarlyFragmentTests;
+                sync.mSrcAccess = rhi::Access::kDepthStencilAttachmentWrite;
+                sync.mDstStage = rhi::PipelineStage::kFragmentShader;
+                sync.mDstAccess = rhi::Access::kDepthStencilAttachmentRead;
+                cmd.ImageBarrier(*target->mDepthImage, rhi::ImageLayout::kDepthStencilAttachment,
+                        rhi::ImageLayout::kShaderReadOnly, sync);
+                target->mDepthLayout = rhi::ImageLayout::kShaderReadOnly;
+            }
+        }
+    }
+
+    // ---- immediate-mode draw ----
+
+    void Renderer::DrawImmediate(const UploadedMesh* mesh, const rhi::ShaderProgram& program,
+            rhi::PrimitiveTopology topology, uint32_t instanceCount) {
+        Impl& impl = *mImpl;
+        rhi::CommandList& cmd = *impl.mCmd;
+
+        if (!impl.mPassOpen) {
+            impl.mLastError = "Draw: no active pass";
+            return;
+        }
+
+        // pipeline: collect/cache; rebind only when the hash changes
+        const bool useInstancing = instanceCount > 1;
+        const rhi::GraphicsPipelineState state =
+                impl.BuildPipelineState(mesh, program, topology, useInstancing);
+        const uint64_t hash = state.GetHash();
+        if (hash != impl.mCurrentPipelineHash) {
             rhi::GraphicsPipeline pipeline;
-            const rhi::GraphicsPipelineState state = mImpl->BuildPipelineState(draw);
-            if (!mImpl->mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
-                mImpl->mLastError = "EndFrame: pipeline: " + mImpl->mDevice->GetLastError();
-                continue;
+            if (!impl.mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
+                impl.mLastError = "Draw: pipeline: " + impl.mDevice->GetLastError();
+                return;
             }
             cmd.BindGraphicsPipeline(pipeline);
 
-            // push constants: per declared range of each stage
-            const rhi::ShaderStage stages[3] = {
-                    rhi::ShaderStage::kVertex, rhi::ShaderStage::kFragment, rhi::ShaderStage::kGeometry};
-            for (const rhi::ShaderStage stage : stages) {
-                const rhi::Shader* shader = draw.mProgram->GetStage(stage);
-                if (shader == nullptr) {
+            // replay push constants: per field, only those this program
+            // declares and the user has set (fields of different programs may
+            // share offsets; each keeps its own value)
+            for (const auto& field : impl.mFields) {
+                if (field.mProgram != &program || field.mValue.empty()) {
                     continue;
                 }
-                for (const auto& range : shader->GetReflection().mPushConstantRanges) {
-                    const uint32_t end = range.mOffset + range.mSize;
-                    if (end > draw.mTableSize) {
-                        continue;
-                    }
-                    cmd.SetPushConstants(pipeline, range.mOffset, range.mSize,
-                            draw.mTable.data() + range.mOffset);
-                }
+                cmd.SetPushConstants(pipeline, field.mOffset, field.mSize, field.mValue.data());
             }
 
-            // images/samplers: one descriptor set per draw, bindings exactly
-            // as the user bound them
-            if (draw.mImageCount > 0 || draw.mSamplerCount > 0) {
+            impl.mCurrentPipelineHash = hash;
+        }
+
+        // images/samplers: rebuild the descriptor set per draw (correct and
+        // cheap at teaching scale)
+        if (impl.mImageCount > 0 || impl.mSamplerCount > 0) {
+            rhi::GraphicsPipeline pipeline;
+            if (impl.mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
                 rhi::DescriptorSetLayout layout;
                 if (pipeline.GetDescriptorSetLayout(0, layout)) {
                     auto set = std::make_unique<rhi::DescriptorSet>();
-                    if (mImpl->mDevice->CreateDescriptorSet(layout, *set)) {
+                    if (impl.mDevice->CreateDescriptorSet(layout, *set)) {
                         bool written = true;
-                        for (uint32_t i = 0; i < draw.mImageCount; ++i) {
-                            written &= set->WriteImage(draw.mImages[i].mBinding,
-                                    *draw.mImages[i].mImage, rhi::DescriptorType::kSampledImage);
+                        for (uint32_t i = 0; i < impl.mImageCount; ++i) {
+                            written &= set->WriteImage(impl.mImages[i].mBinding,
+                                    *impl.mImages[i].mImage, rhi::DescriptorType::kSampledImage);
                         }
-                        for (uint32_t i = 0; i < draw.mSamplerCount; ++i) {
-                            written &= set->WriteSampler(draw.mSamplers[i].mBinding,
-                                    *draw.mSamplers[i].mSampler);
+                        for (uint32_t i = 0; i < impl.mSamplerCount; ++i) {
+                            written &= set->WriteSampler(impl.mSamplers[i].mBinding,
+                                    *impl.mSamplers[i].mSampler);
                         }
                         if (written) {
                             cmd.BindDescriptorSet(pipeline, *set, 0);
-                            mImpl->mFrameSets.push_back(std::move(set));
+                            impl.mFrameSets.push_back(std::move(set));
                         } else {
-                            mImpl->mLastError = "EndFrame: descriptor write failed "
+                            impl.mLastError = "Draw: descriptor write failed "
                                     "(binding not declared in the shader?)";
                             set->Destroy();
                         }
                     }
                 }
             }
+        }
 
-            if (draw.mMesh != nullptr) {
-                const UploadedMesh& mesh = *draw.mMesh;
-                cmd.BindVertexBuffer(mesh.mVertexBuffer, 0);
-                if (draw.mInstance.mBuffer != nullptr) {
-                    cmd.BindVertexBuffer(*draw.mInstance.mBuffer, 1);
-                }
-                cmd.BindIndexBuffer(mesh.mIndexBuffer);
-                cmd.DrawIndexed(mesh.mIndexCount, draw.mInstanceCount, 0, 0, 0);
-            } else {
-                cmd.Draw(3, 1, 0, 0);
+        if (mesh != nullptr) {
+            cmd.BindVertexBuffer(mesh->mVertexBuffer, 0);
+            if (impl.mInstance.mBuffer != nullptr) {
+                cmd.BindVertexBuffer(*impl.mInstance.mBuffer, 1);
             }
+            cmd.BindIndexBuffer(mesh->mIndexBuffer);
+            cmd.DrawIndexed(mesh->mIndexCount, instanceCount, 0, 0, 0);
+        } else {
+            cmd.Draw(3, 1, 0, 0);
         }
-        if (passOpen) {
-            cmd.EndRendering();
-        }
-
-        // back to PresentSrc for the App's ImGui composite
-        sync.mSrcStage = rhi::PipelineStage::kColorAttachmentOutput;
-        sync.mSrcAccess = rhi::Access::kColorAttachmentWrite;
-        sync.mDstStage = rhi::PipelineStage::kBottomOfPipe;
-        sync.mDstAccess = rhi::Access::kNone;
-        cmd.ImageBarrier(*mImpl->mSwapchainImage, rhi::ImageLayout::kColorAttachment,
-                rhi::ImageLayout::kPresentSrc, sync);
-
-        // per-second stats (avoids log flooding while keeping visibility)
-        mImpl->mStatsFrames += 1;
-        mImpl->mStatsDraws += mImpl->mDraws.size();
-        mImpl->mStatsLastDraws = static_cast<uint32_t>(mImpl->mDraws.size());
-        const auto now = std::chrono::steady_clock::now();
-        const double elapsed = std::chrono::duration<double>(now - mImpl->mStatsTime).count();
-        if (elapsed >= 1.0) {
-            const double fps = static_cast<double>(mImpl->mStatsFrames) / elapsed;
-            const double avgDraws = static_cast<double>(mImpl->mStatsDraws) / mImpl->mStatsFrames;
-            moe::Logger::info("Renderer frame stats: {:.1f} fps, {:.0f} avg draws/frame, "
-                    "{} cached pipelines",
-                    fps, avgDraws, mImpl->mCache->GetNodeCount());
-            mImpl->mStatsTime = now;
-            mImpl->mStatsFrames = 0;
-            mImpl->mStatsDraws = 0;
-        }
-
-        mImpl->mDraws.clear();
+        impl.mStatsDraws += 1;
     }
 
     const std::string& Renderer::GetLastError() const {
         return mImpl->mLastError;
+    }
+
+    // ---- PassContext: forwards to the renderer's internals ----
+
+    void PassContext::SetState(const DrawState& state) {
+        mRenderer->SetStateInternal(state);
+    }
+
+    void PassContext::SetPushConstant(int32_t index, const void* data, size_t size) {
+        mRenderer->SetPushConstantInternal(index, data, size);
+    }
+
+    void PassContext::BindImage(uint32_t binding, const rhi::Image& image) {
+        mRenderer->BindImageInternal(binding, image);
+    }
+
+    void PassContext::BindSampler(uint32_t binding, const rhi::Sampler& sampler) {
+        mRenderer->BindSamplerInternal(binding, sampler);
+    }
+
+    void PassContext::BindInstanceBuffer(const rhi::Buffer& buffer, uint32_t stride,
+            const InstanceAttribute* attributes, uint32_t attributeCount) {
+        mRenderer->BindInstanceBufferInternal(buffer, stride, attributes, attributeCount);
+    }
+
+    void PassContext::Draw(const UploadedMesh& mesh, const rhi::ShaderProgram& program,
+            rhi::PrimitiveTopology topology, uint32_t instanceCount) {
+        mRenderer->DrawImmediate(&mesh, program, topology, instanceCount);
+    }
+
+    void PassContext::DrawFullscreen(const rhi::ShaderProgram& program) {
+        mRenderer->DrawImmediate(nullptr, program, rhi::PrimitiveTopology::kTriangleList, 1);
     }
 }// namespace moe::neo

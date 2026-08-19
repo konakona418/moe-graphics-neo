@@ -6,6 +6,7 @@ add_library(moe-neo STATIC
   OggProvider.cpp
   Renderer.cpp
   SceneGraph.cpp
+  SwapchainImage.cpp
   TextureLoader.cpp
   Uploader.cpp
   Window.cpp

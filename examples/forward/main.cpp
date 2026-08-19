@@ -1,6 +1,7 @@
 #include <examples/common/App.hpp>
 
 #include <Neo/Renderer.hpp>
+#include <Neo/SwapchainImage.hpp>
 #include <Neo/Uploader.hpp>
 #include <RHI/Shader.hpp>
 
@@ -23,6 +24,7 @@ namespace {
         moe::rhi::Shader mFrag;
         moe::rhi::ShaderProgram mProgram;
         moe::neo::Renderer mRenderer;
+        moe::neo::SwapchainImage mFrame;
         int32_t mMvpIndex{-1};
         int32_t mModelIndex{-1};
         float mAngle{0.0f};
@@ -118,16 +120,20 @@ namespace {
         const glm::mat4 mvp = proj * view * model;
 
         const float clear[4] = {0.15f, 0.15f, 0.18f, 1.0f};
-        moe::rhi::Image swapImage;
-        if (!ctx.mSwapchain.GetCurrentImage(swapImage)) {
+        if (!data->mFrame.Acquire(ctx.mSwapchain)) {
             return;
         }
-        data->mRenderer.BeginFrame(cmd, swapImage, ctx.mSwapchain.GetFormat(), clear);
-        data->mRenderer.SetPushConstant(data->mMvpIndex, &mvp, sizeof(mvp));
-        data->mRenderer.SetPushConstant(data->mModelIndex, &model, sizeof(model));
-        data->mRenderer.Draw(data->mMesh, data->mProgram);
+        data->mRenderer.BeginFrame(cmd, data->mFrame, clear);
+
+        const moe::neo::PassDesc mainPass{"forward", {}, moe::rhi::LoadOp::kClear};
+        data->mRenderer.Execute(mainPass, [&](moe::neo::PassContext& pass) {
+            pass.SetPushConstant(data->mMvpIndex, &mvp, sizeof(mvp));
+            pass.SetPushConstant(data->mModelIndex, &model, sizeof(model));
+            pass.Draw(data->mMesh, data->mProgram);
+        });
+
         data->mRenderer.EndFrame();
-        swapImage.Destroy(); // borrowed wrapper: only drops the wrapper
+        data->mFrame.Release();
     }
 
     void DrawUI(void* userdata, examples::AppContext&) {

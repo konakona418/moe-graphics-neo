@@ -17,7 +17,7 @@ struct VertexOutput {
 };
 
 [shader("vertex")]
-VertexOutput vertexMain(uint vertexIndex : SV_VertexID) {
+VertexOutput vertexMain(uint vertexIndex : SV_VulkanVertexId) {
     // fullscreen triangle (no vertex buffer)
     VertexOutput output;
     float2 uv = float2(float((vertexIndex << 1) & 2), float(vertexIndex & 2));

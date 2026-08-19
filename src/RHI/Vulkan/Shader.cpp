@@ -35,8 +35,10 @@ namespace moe::rhi {
         }
 
         // Maps a reflected vertex-input format to the RHI Format. Formats the
-        // RHI does not know about abort instead of silently producing a wrong
-        // vertex layout.
+        // Reflected vertex inputs are informational (the Renderer derives the
+        // pipeline's vertex layout from mesh/instance data); unknown formats
+        // (e.g. matrix attributes that SPIRV-Reflect splits into components)
+        // degrade to undefined instead of aborting.
         Format ToFormat(SpvReflectFormat format) {
             switch (format) {
                 case SPV_REFLECT_FORMAT_R16G16_SFLOAT: return Format::kR16G16Float;
@@ -46,10 +48,7 @@ namespace moe::rhi {
                 case SPV_REFLECT_FORMAT_R32G32_SFLOAT: return Format::kR32G32Float;
                 case SPV_REFLECT_FORMAT_R32G32B32_SFLOAT: return Format::kR32G32B32Float;
                 case SPV_REFLECT_FORMAT_R32G32B32A32_SFLOAT: return Format::kR32G32B32A32Float;
-                default: {
-                    MOE_RHI_ASSERT(false, "ToFormat: unhandled SPIRV-Reflect vertex format (extend RHI Format + mapping)");
-                    return Format::kR32G32B32A32Float;
-                }
+                default: return Format::kUndefined;
             }
         }
     }// namespace

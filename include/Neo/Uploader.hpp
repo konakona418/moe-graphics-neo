@@ -77,6 +77,11 @@ namespace moe::neo {
         // ShaderReadOnly layout; bind it with DescriptorSet::WriteImage.
         bool UploadTexture(const Texture& texture, UploadedTexture& out, std::string& error);
 
+        // Uploads raw bytes into a device-local buffer (e.g. instance data).
+        // The buffer is created with the given usage plus TransferDst.
+        bool UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
+                rhi::Buffer& out, std::string& error);
+
     private:
         rhi::Device* mDevice{nullptr};
     };

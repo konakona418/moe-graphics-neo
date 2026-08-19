@@ -28,6 +28,22 @@ if(TARGET moe-shaders)
     add_dependencies(moe-example-forward moe-shaders)
 endif()
 
+add_executable(moe-example-postfx
+  postfx/main.cpp
+)
+
+target_link_libraries(moe-example-postfx PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-postfx PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-postfx moe-shaders)
+endif()
+
 add_executable(moe-example-clouds
   clouds/main.cpp
 )
