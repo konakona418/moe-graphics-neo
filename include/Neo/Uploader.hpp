@@ -81,6 +81,8 @@ namespace moe::neo {
         // Uploads the texture pixels into a sampled image + linear sampler
         // (sRGB format when Texture::mSrgb is set). The image ends in
         // ShaderReadOnly layout; bind it with DescriptorSet::WriteImage.
+        // With Texture::mMipLevels > 1, mData must contain the whole chain
+        // tightly packed (level 0 first, each level's extent halved).
         bool UploadTexture(const Texture& texture, UploadedTexture& out);
 
         // Uploads raw bytes into a device-local buffer (e.g. instance data).

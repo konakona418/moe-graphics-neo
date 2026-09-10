@@ -4,6 +4,7 @@
 #include <Core/Logger.hpp>
 #include <RHI/CommandList.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -263,7 +264,7 @@ namespace moe::neo {
         }
 
         rhi::ImageCreateInfo imageInfo{};
-        imageInfo.mType = rhi::ImageType::k2D;
+        imageInfo.mType = texture.mDepth > 1 ? rhi::ImageType::k3D : rhi::ImageType::k2D;
         imageInfo.mWidth = texture.mWidth;
         imageInfo.mHeight = texture.mHeight;
         imageInfo.mDepth = 1;
@@ -318,7 +319,27 @@ namespace moe::neo {
         cmd.ImageBarrier(out.mImage, rhi::ImageLayout::kUndefined,
                 rhi::ImageLayout::kTransferDst, toTransfer);
 
-        cmd.CopyBufferToImage(staging, out.mImage, 0, 0, 1);
+        // Texture::mData packs all mip levels tightly, level 0 first; each
+        // level's extent is the base extent shifted down by its index.
+        const uint32_t levels = texture.mMipLevels;
+        size_t offset = 0;
+        for (uint32_t level = 0; level < levels; ++level) {
+            const uint32_t width = std::max(1u, texture.mWidth >> level);
+            const uint32_t height = std::max(1u, texture.mHeight >> level);
+            const uint32_t depth = std::max(1u, texture.mDepth >> level);
+            const size_t levelBytes = static_cast<size_t>(width) * height * depth
+                    * texture.mChannels;
+            if (offset + levelBytes > texture.mData.size()) {
+                cmd.Destroy();
+                staging.Destroy();
+                out.mSampler.Destroy();
+                out.mImage.Destroy();
+                return moe::Fail("Uploader: texture data smaller than its mip chain");
+            }
+            cmd.CopyBufferToImage(staging, out.mImage, level, 0, 1,
+                    static_cast<uint32_t>(offset));
+            offset += levelBytes;
+        }
 
         rhi::SyncInfo toSample{};
         toSample.mSrcStage = rhi::PipelineStage::kTransfer;

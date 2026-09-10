@@ -38,7 +38,8 @@ namespace moe::rhi {
         // image must currently be in TransferDst layout; buffer needs
         // TransferSrc usage.
         void CopyBufferToImage(const Buffer& src, const Image& dst,
-                uint32_t mipLevel = 0, uint32_t baseArrayLayer = 0, uint32_t layerCount = 1);
+                uint32_t mipLevel = 0, uint32_t baseArrayLayer = 0, uint32_t layerCount = 1,
+                uint32_t bufferOffset = 0);
         // Copies the whole src image (in srcLayout) into dst (in dstLayout).
         // Same format required (use BlitImage for format conversion/scaling).
         void CopyImage(const Image& src, ImageLayout srcLayout,

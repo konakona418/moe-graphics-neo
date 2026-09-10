@@ -8,6 +8,7 @@
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace moe::rhi {
@@ -63,9 +64,10 @@ namespace moe::rhi {
     }
 
     void CommandList::CopyBufferToImage(const Buffer& src, const Image& dst,
-            uint32_t mipLevel, uint32_t baseArrayLayer, uint32_t layerCount) {
+            uint32_t mipLevel, uint32_t baseArrayLayer, uint32_t layerCount,
+            uint32_t bufferOffset) {
         VkBufferImageCopy region{};
-        region.bufferOffset = 0;
+        region.bufferOffset = bufferOffset;
         region.bufferRowLength = 0; // tightly packed
         region.bufferImageHeight = 0;
         region.imageSubresource.aspectMask = dst.mImpl->mFormat == Format::kD32Float
@@ -74,7 +76,11 @@ namespace moe::rhi {
         region.imageSubresource.baseArrayLayer = baseArrayLayer;
         region.imageSubresource.layerCount = layerCount;
         region.imageOffset = {0, 0, 0};
-        region.imageExtent = {dst.mImpl->mWidth, dst.mImpl->mHeight, dst.mImpl->mDepth};
+        // a mip level's extent is the base extent shifted down by its index
+        region.imageExtent = {
+                std::max(1u, dst.mImpl->mWidth >> mipLevel),
+                std::max(1u, dst.mImpl->mHeight >> mipLevel),
+                std::max(1u, dst.mImpl->mDepth >> mipLevel)};
         vkCmdCopyBufferToImage(mImpl->mCommandBuffer, src.mImpl->mBuffer,
                 dst.mImpl->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
     }

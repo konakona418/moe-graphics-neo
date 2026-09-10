@@ -6,7 +6,8 @@
 
 namespace moe::neo {
     // CPU-side image data, format-agnostic (channels + bytes). The GPU uploader
-    // picks the concrete RHI format.
+    // picks the concrete RHI format. With mMipLevels > 1, mData holds the whole
+    // chain tightly packed: level 0 first, then each level at half extent.
     struct Texture {
         std::string mName;
         uint32_t mWidth{0};
