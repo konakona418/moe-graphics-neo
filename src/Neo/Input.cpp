@@ -1,5 +1,6 @@
 #include "Neo/Input.hpp"
 
+#include <Core/Error.hpp>
 #include "Neo/Window.hpp"
 
 #include <GLFW/glfw3.h>
@@ -125,13 +126,12 @@ namespace moe::neo {
         mImpl.reset();
     }
 
-    bool Input::Init(Window& window, std::string& error) {
+    bool Input::Init(Window& window) {
         mImpl = std::make_unique<Impl>();
         mImpl->mWindow = reinterpret_cast<GLFWwindow*>(window.GetHandle());
         if (mImpl->mWindow == nullptr) {
-            error = "Input: no GLFW window";
             mImpl.reset();
-            return false;
+            return moe::Fail("Input: no GLFW window");
         }
 
         // Chain with whatever callbacks are installed (e.g. ImGui's later).

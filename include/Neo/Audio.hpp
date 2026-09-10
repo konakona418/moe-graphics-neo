@@ -53,7 +53,7 @@ namespace moe::neo {
 
         // Opens the OpenAL device on the audio thread and starts its loop.
         // Idempotent; fails cleanly when no device is available.
-        bool Init(std::string& error);
+        bool Init();
 
         // Stops the audio thread and tears down OpenAL. Idempotent.
         void Destroy();

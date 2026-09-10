@@ -22,14 +22,13 @@ namespace moe::rhi {
         Shader& operator=(const Shader&) = delete;
 
         // Reads and reflects the .spv file. Returns false on failure; the
-        // reason is available via GetLastError().
+        // reason is available via moe::Error::Get().
         bool Load(const char* spvPath, ShaderStage stage);
 
         // Re-reads the .spv file and re-reflects (used by hot reload).
         bool Reload();
 
         const std::string& GetPath() const;
-        const std::string& GetLastError() const;
         ShaderStage GetStage() const;
         const ShaderReflection& GetReflection() const;
         // The raw .spv bytes (used by the pipeline cache).

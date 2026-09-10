@@ -1,4 +1,8 @@
 #include <RHI/Buffer.hpp>
+
+#include <Core/Defer.hpp>
+#include "TestSupport.hpp"
+#include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
 #include <RHI/Device.hpp>
@@ -37,8 +41,7 @@ namespace {
 }// namespace
 
 int main() {
-    std::string error;
-
+    constexpr const char* kTestName = "Graph smoke";
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -66,23 +69,28 @@ int main() {
     const auto imageId = graph.RegisterImage(image);
     const auto readbackId = graph.RegisterBuffer(readback);
 
+
+    moe::Defer cleanup([&] {
+        commandList.Destroy();
+        descriptorSet.Destroy();
+        readback.Destroy();
+        image.Destroy();
+        cache.Destroy();
+        device.Destroy();
+    });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!computeShader.Load(MOE_SOURCE_DIR "/shaders/rhi/image_write.comp.spv", moe::rhi::ShaderStage::kCompute)) {
-        error = computeShader.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!computeProgram.AddShader(computeShader)) {
-        error = "compute program add failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "compute program add failed");
     }
     computeState.mProgram = &computeProgram;
     if (!device.GetOrCreateComputePipeline(computeState, pipeline)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     // storage image written by the compute pass, then copied out
@@ -93,29 +101,24 @@ int main() {
     imageInfo.mFormat = moe::rhi::Format::kR32Uint;
     imageInfo.mUsage = moe::rhi::ImageUsage::kStorage | moe::rhi::ImageUsage::kTransferSrc;
     if (!device.CreateImage(imageInfo, image)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     readbackInfo.mSize = sizeof(uint32_t) * kSize * kSize;
     readbackInfo.mUsage = moe::rhi::BufferUsage::kTransferDst;
     readbackInfo.mCpuVisible = true;
     if (!device.CreateBuffer(readbackInfo, readback)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!pipeline.GetDescriptorSetLayout(0, layout)) {
-        error = "no descriptor set layout 0";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "no descriptor set layout 0");
     }
     if (!device.CreateDescriptorSet(layout, descriptorSet)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!descriptorSet.WriteImage(0, image, moe::rhi::DescriptorType::kStorageImage)) {
-        error = "failed to write image descriptor";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "failed to write image descriptor");
     }
 
     writePass.mPipeline = &pipeline;
@@ -142,8 +145,7 @@ int main() {
         access.mLayout = moe::rhi::ImageLayout::kUndefined;
         desc.mWrites.push_back(access);
         if (!graph.AddPass(desc)) {
-            error = "failed to add read pass";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to add read pass");
         }
     }
     {
@@ -158,35 +160,30 @@ int main() {
         access.mLayout = moe::rhi::ImageLayout::kGeneral;
         desc.mWrites.push_back(access);
         if (!graph.AddPass(desc)) {
-            error = "failed to add write pass";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to add write pass");
         }
     }
 
-    if (!graph.Compile(error)) {
-        goto cleanup;
+    if (!graph.Compile()) {
+        return moe::test::Fail(kTestName);
     }
 
     if (!device.CreateCommandList(commandList)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     commandList.Begin();
     if (!graph.Execute(commandList)) {
-        error = "graph execute failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "graph execute failed");
     }
     commandList.End();
     if (!device.Submit(commandList, true)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     {
         auto* data = static_cast<uint32_t*>(readback.Map());
         if (!data) {
-            error = "failed to map readback buffer";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map readback buffer");
         }
         // shader writes value = pixel.x + pixel.y * kSize; row-major copy makes
         // buffer[i] == i
@@ -194,7 +191,7 @@ int main() {
             if (data[i] != i) {
                 std::fprintf(stderr, "Graph smoke FAILED: data[%u] = %u, expected %u\n", i, data[i], i);
                 readback.Unmap();
-                goto cleanup;
+                return moe::test::Fail(kTestName);
             }
         }
         readback.Unmap();
@@ -202,17 +199,5 @@ int main() {
 
     std::printf("Graph smoke passed.\n");
 
-cleanup:
-    commandList.Destroy();
-    descriptorSet.Destroy();
-    readback.Destroy();
-    image.Destroy();
-    cache.Destroy();
-    device.Destroy();
-
-    if (!error.empty()) {
-        std::fprintf(stderr, "Graph smoke FAILED: %s\n", error.c_str());
-        return EXIT_FAILURE;
-    }
     return EXIT_SUCCESS;
 }

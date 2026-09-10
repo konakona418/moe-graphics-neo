@@ -1,5 +1,6 @@
 #include "AudioInternal.hpp"
 
+#include <Core/Error.hpp>
 #include <Core/Logger.hpp>
 
 #include <thread>
@@ -344,7 +345,7 @@ namespace moe::neo {
         }
     }
 
-    bool Audio::Init(std::string& error) {
+    bool Audio::Init() {
         if (mImpl != nullptr) {
             return true; // already initialized
         }
@@ -403,9 +404,8 @@ namespace moe::neo {
             if (mImpl->mAudioThread.joinable()) {
                 mImpl->mAudioThread.join();
             }
-            error = std::move(initError);
             mImpl.reset();
-            return false;
+            return moe::Fail(std::move(initError));
         }
 
         mImpl->mInitialized = true;

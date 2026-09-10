@@ -1,5 +1,7 @@
 #include "Neo/Window.hpp"
 
+#include <Core/Error.hpp>
+
 // volk (Vulkan types) must be visible to glfw3.h for its Vulkan functions.
 #include <volk.h>
 #include <GLFW/glfw3.h>
@@ -36,48 +38,43 @@ namespace moe::neo {
     }
 
     bool Window::Create(moe::rhi::Device& device, uint32_t width, uint32_t height,
-            const char* title, std::string& error) {
+            const char* title) {
         mImpl = new Impl();
 
         if (glfwInit() != GLFW_TRUE) {
-            error = "glfwInit failed";
             delete mImpl;
             mImpl = nullptr;
-            return false;
+            return moe::Fail("glfwInit failed");
         }
         if (glfwVulkanSupported() != GLFW_TRUE) {
-            error = "glfw: Vulkan not supported";
             delete mImpl;
             mImpl = nullptr;
-            return false;
+            return moe::Fail("glfw: Vulkan not supported");
         }
         // tell GLFW to resolve instance functions through the same loader volk uses
         glfwInitVulkanLoader(vkGetInstanceProcAddr);
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         mImpl->mWindow = glfwCreateWindow(width, height, title, nullptr, nullptr);
         if (mImpl->mWindow == nullptr) {
-            error = "glfwCreateWindow failed";
             delete mImpl;
             mImpl = nullptr;
-            return false;
+            return moe::Fail("glfwCreateWindow failed");
         }
 
         uintptr_t instanceHandle = 0;
         if (!device.GetInstanceHandle(instanceHandle)) {
-            error = "device has no instance (mEnablePresent required)";
             glfwDestroyWindow(mImpl->mWindow);
             delete mImpl;
             mImpl = nullptr;
-            return false;
+            return moe::Fail("device has no instance (mEnablePresent required)");
         }
         mImpl->mInstance = reinterpret_cast<VkInstance>(instanceHandle);
 
         if (glfwCreateWindowSurface(mImpl->mInstance, mImpl->mWindow, nullptr, &mImpl->mSurface) != VK_SUCCESS) {
-            error = "glfwCreateWindowSurface failed";
             glfwDestroyWindow(mImpl->mWindow);
             delete mImpl;
             mImpl = nullptr;
-            return false;
+            return moe::Fail("glfwCreateWindowSurface failed");
         }
         return true;
     }

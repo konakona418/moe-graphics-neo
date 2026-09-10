@@ -7,6 +7,10 @@
 
 #include <examples/common/App.hpp>
 
+#include <Core/Error.hpp>
+#include <Neo/Assets.hpp>
+#include <Neo/Renderer.hpp>
+#include <Neo/SwapchainImage.hpp>
 #include <Neo/Uploader.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
@@ -55,10 +59,11 @@ namespace {
 
     struct SnowData {
         moe::neo::Uploader mUploader;
-        // GPU-owned terrain state
+        // GPU-owned terrain state. The vertex/index buffers double as the
+        // Renderer's UploadedMesh view (the build compute pass writes the
+        // vertices directly, so they are raw storage buffers first).
         moe::rhi::Buffer mHeightBuffer;  // float[kVertexCount], storage|transfer
-        moe::rhi::Buffer mVertexBuffer;  // interleaved, storage|vertex
-        moe::rhi::Buffer mIndexBuffer;
+        moe::neo::UploadedMesh mMesh;    // vertex (storage|vertex) + index
         moe::rhi::Buffer mHeightReadback; // cpu-visible copy target
         moe::rhi::Shader mBrushComp;
         moe::rhi::Shader mBuildComp;
@@ -71,10 +76,10 @@ namespace {
         moe::rhi::DescriptorSet mBrushSet;
         moe::rhi::DescriptorSet mBuildSet;
         moe::rhi::CommandList mTerrainCmd;
-        moe::rhi::Shader mVert;
-        moe::rhi::Shader mFrag;
-        moe::rhi::ShaderProgram mProgram;
-        moe::rhi::GraphicsPipeline mPipeline;
+        moe::neo::Renderer mRenderer;
+        moe::neo::SwapchainImage mFrame;
+        moe::neo::ProgramHandle mProgram;
+        int32_t mPcMvp{-1};
 
         // CPU mirror of the heights (read back every frame for the camera)
         float mHeights[kVertexCount]{};
@@ -88,10 +93,6 @@ namespace {
         bool mMoving{false};
         float mBrushRadius{3.2f};
         float mBrushAmount{0.55f};
-    };
-
-    struct PushConstants {
-        glm::mat4 mMvp;
     };
 
     // Bilinear terrain height at world XZ (from the CPU mirror).
@@ -147,12 +148,11 @@ namespace {
     // Uploads bytes to a freshly created transfer-dst buffer.
     bool CreateAndUploadBuffer(moe::rhi::Device& device,
             moe::rhi::BufferUsage usage, const void* data, uint64_t byteCount,
-            moe::rhi::Buffer& outBuffer, std::string& error) {
+            moe::rhi::Buffer& outBuffer) {
         moe::rhi::BufferCreateInfo info{};
         info.mSize = byteCount;
         info.mUsage = usage;
         if (!device.CreateBuffer(info, outBuffer)) {
-            error = device.GetLastError();
             return false;
         }
 
@@ -162,13 +162,12 @@ namespace {
         stagingInfo.mCpuVisible = true;
         moe::rhi::Buffer staging;
         if (!device.CreateBuffer(stagingInfo, staging)) {
-            error = device.GetLastError();
             return false;
         }
         {
             auto* dst = static_cast<uint8_t*>(staging.Map());
             if (dst == nullptr) {
-                error = "staging map failed";
+                moe::Error::Set("staging map failed");
                 staging.Destroy();
                 return false;
             }
@@ -178,7 +177,6 @@ namespace {
 
         moe::rhi::CommandList cmd;
         if (!device.CreateCommandList(cmd)) {
-            error = device.GetLastError();
             staging.Destroy();
             return false;
         }
@@ -186,7 +184,6 @@ namespace {
         cmd.CopyBuffer(staging, outBuffer, byteCount, 0, 0);
         cmd.End();
         if (!device.Submit(cmd, true)) {
-            error = device.GetLastError();
             cmd.Destroy();
             staging.Destroy();
             return false;
@@ -197,11 +194,10 @@ namespace {
     }
 
     bool CreateComputePipeline(moe::rhi::Device& device, moe::rhi::ShaderProgram& program,
-            moe::rhi::ComputePipeline& outPipeline, std::string& error) {
+            moe::rhi::ComputePipeline& outPipeline) {
         moe::rhi::ComputePipelineState state{};
         state.mProgram = &program;
         if (!device.GetOrCreateComputePipeline(state, outPipeline)) {
-            error = device.GetLastError();
             return false;
         }
         return true;
@@ -209,7 +205,6 @@ namespace {
 
     bool Setup(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<SnowData*>(userdata);
-        std::string error;
 
         InitTerrainHeights(*data);
 
@@ -217,35 +212,43 @@ namespace {
         // is written entirely by the build compute pass) ----
         if (!CreateAndUploadBuffer(ctx.mDevice, moe::rhi::BufferUsage::kStorage
                         | moe::rhi::BufferUsage::kTransferDst | moe::rhi::BufferUsage::kTransferSrc,
-                data->mHeights, sizeof(data->mHeights), data->mHeightBuffer, error)) {
-            std::fprintf(stderr, "snow: height buffer: %s\n", error.c_str());
+                data->mHeights, sizeof(data->mHeights), data->mHeightBuffer)) {
+            std::fprintf(stderr, "snow: height buffer: %s\n", moe::Error::Get().c_str());
             return false;
         }
         moe::rhi::BufferCreateInfo vertexInfo{};
         vertexInfo.mSize = kVertexCount * kVertexStride;
         vertexInfo.mUsage = moe::rhi::BufferUsage::kStorage | moe::rhi::BufferUsage::kVertex;
-        if (!ctx.mDevice.CreateBuffer(vertexInfo, data->mVertexBuffer)) {
-            std::fprintf(stderr, "snow: vertex buffer: %s\n", ctx.mDevice.GetLastError().c_str());
+        if (!ctx.mDevice.CreateBuffer(vertexInfo, data->mMesh.mVertexBuffer)) {
+            std::fprintf(stderr, "snow: vertex buffer: %s\n", moe::Error::Get().c_str());
             return false;
         }
+        data->mMesh.mVertexStride = kVertexStride;
+        data->mMesh.mVertexCount = kVertexCount;
+        data->mMesh.mPositionOffset = kPositionOffset;
+        data->mMesh.mNormalOffset = kNormalOffset;
+        data->mMesh.mUvOffset = kVertexStride; // absent
+        data->mMesh.mColorOffset = kColorOffset;
+
         std::vector<uint32_t> indices;
         BuildTerrainIndices(indices);
         if (!CreateAndUploadBuffer(ctx.mDevice, moe::rhi::BufferUsage::kIndex
                         | moe::rhi::BufferUsage::kTransferDst,
-                indices.data(), indices.size() * sizeof(uint32_t), data->mIndexBuffer, error)) {
-            std::fprintf(stderr, "snow: index buffer: %s\n", error.c_str());
+                indices.data(), indices.size() * sizeof(uint32_t), data->mMesh.mIndexBuffer)) {
+            std::fprintf(stderr, "snow: index buffer: %s\n", moe::Error::Get().c_str());
             return false;
         }
+        data->mMesh.mIndexCount = static_cast<uint32_t>(indices.size());
         moe::rhi::BufferCreateInfo readbackInfo{};
         readbackInfo.mSize = sizeof(data->mHeights);
         readbackInfo.mUsage = moe::rhi::BufferUsage::kTransferDst;
         readbackInfo.mCpuVisible = true;
         if (!ctx.mDevice.CreateBuffer(readbackInfo, data->mHeightReadback)) {
-            std::fprintf(stderr, "snow: readback buffer: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "snow: readback buffer: %s\n", moe::Error::Get().c_str());
             return false;
         }
         if (!ctx.mDevice.CreateCommandList(data->mTerrainCmd)) {
-            std::fprintf(stderr, "snow: terrain command list: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "snow: terrain command list: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -259,9 +262,9 @@ namespace {
             std::fprintf(stderr, "snow: compute shader load failed\n");
             return false;
         }
-        if (!CreateComputePipeline(ctx.mDevice, data->mBrushProgram, data->mBrushPipeline, error)
-                || !CreateComputePipeline(ctx.mDevice, data->mBuildProgram, data->mBuildPipeline, error)) {
-            std::fprintf(stderr, "snow: compute pipeline: %s\n", error.c_str());
+        if (!CreateComputePipeline(ctx.mDevice, data->mBrushProgram, data->mBrushPipeline)
+                || !CreateComputePipeline(ctx.mDevice, data->mBuildProgram, data->mBuildPipeline)) {
+            std::fprintf(stderr, "snow: compute pipeline: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -270,40 +273,34 @@ namespace {
         if (!data->mBrushPipeline.GetDescriptorSetLayout(0, data->mBrushLayout)
                 || !ctx.mDevice.CreateDescriptorSet(data->mBrushLayout, data->mBrushSet)
                 || !data->mBrushSet.WriteBuffer(0, data->mHeightBuffer)) {
-            std::fprintf(stderr, "snow: brush set: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "snow: brush set: %s\n", moe::Error::Get().c_str());
             return false;
         }
         if (!data->mBuildPipeline.GetDescriptorSetLayout(0, data->mBuildLayout)
                 || !ctx.mDevice.CreateDescriptorSet(data->mBuildLayout, data->mBuildSet)
                 || !data->mBuildSet.WriteBuffer(0, data->mHeightBuffer)
-                || !data->mBuildSet.WriteBuffer(1, data->mVertexBuffer)) {
-            std::fprintf(stderr, "snow: build set: %s\n", ctx.mDevice.GetLastError().c_str());
+                || !data->mBuildSet.WriteBuffer(1, data->mMesh.mVertexBuffer)) {
+            std::fprintf(stderr, "snow: build set: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
-        // ---- graphics pipeline ----
-        if (!data->mVert.Load(MOE_SOURCE_DIR "/shaders/examples/snow.vert.spv", moe::rhi::ShaderStage::kVertex)
-                || !data->mFrag.Load(MOE_SOURCE_DIR "/shaders/examples/snow.frag.spv", moe::rhi::ShaderStage::kFragment)
-                || !data->mProgram.AddShader(data->mVert) || !data->mProgram.AddShader(data->mFrag)) {
-            std::fprintf(stderr, "snow: shader load failed\n");
+        // ---- forward program (content layer) + renderer ----
+        data->mProgram = ctx.mAssets.LoadGraphicsProgram(
+                MOE_SOURCE_DIR "/shaders/examples/snow.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/snow.frag.spv");
+        if (!data->mProgram.IsValid()) {
+            std::fprintf(stderr, "snow: shader load: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        moe::rhi::GraphicsPipelineState state{};
-        state.mProgram = &data->mProgram;
-        state.mTopology = moe::rhi::PrimitiveTopology::kTriangleList;
-        state.mColorFormatCount = 1;
-        state.mColorFormats[0] = ctx.mSwapchain.GetFormat();
-        state.mBlendAttachmentCount = 1;
-        state.mRaster.mCullMode = moe::rhi::CullMode::kNone;
-        state.mRaster.mFrontFace = moe::rhi::FrontFace::kCounterClockwise;
-        state.mVertexBindingCount = 1;
-        state.mVertexBindings[0] = {0, kVertexStride, false};
-        state.mVertexAttributeCount = 3;
-        state.mVertexAttributes[0] = {0, 0, moe::rhi::Format::kR32G32B32Float, kPositionOffset};
-        state.mVertexAttributes[1] = {1, 0, moe::rhi::Format::kR32G32B32Float, kNormalOffset};
-        state.mVertexAttributes[2] = {2, 0, moe::rhi::Format::kR8G8B8A8Unorm, kColorOffset};
-        if (!ctx.mDevice.GetOrCreateGraphicsPipeline(state, data->mPipeline)) {
-            std::fprintf(stderr, "snow: pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
+        if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
+                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight())) {
+            std::fprintf(stderr, "snow: renderer: %s\n", moe::Error::Get().c_str());
+            return false;
+        }
+        data->mPcMvp = data->mRenderer.GetPushConstant(
+                *ctx.mAssets.GetProgram(data->mProgram), "mvp");
+        if (data->mPcMvp < 0) {
+            std::fprintf(stderr, "snow: push constant names mismatch\n");
             return false;
         }
 
@@ -354,7 +351,7 @@ namespace {
         toVertexInput.mSrcAccess = moe::rhi::Access::kShaderWrite;
         toVertexInput.mDstStage = moe::rhi::PipelineStage::kVertexInput;
         toVertexInput.mDstAccess = moe::rhi::Access::kVertexAttributeRead;
-        cmd.BufferBarrier(data.mVertexBuffer, toVertexInput);
+        cmd.BufferBarrier(data.mMesh.mVertexBuffer, toVertexInput);
 
         // heights read (compute) -> readback copy
         moe::rhi::SyncInfo toReadback{};
@@ -428,7 +425,7 @@ namespace {
         UpdateTerrain(*data, ctx.mDevice, deltaSeconds);
     }
 
-    void Render(void* userdata, examples::AppContext& ctx, moe::rhi::CommandList& cmd) {
+    void PostRender(void* userdata, examples::AppContext& ctx, moe::rhi::CommandList& cmd) {
         auto* data = static_cast<SnowData*>(userdata);
 
         const glm::vec3 eye = data->mPosition;
@@ -437,17 +434,29 @@ namespace {
                 -std::cos(data->mPitch) * std::cos(data->mYaw));
         const glm::mat4 view = glm::lookAt(eye, eye + forward, glm::vec3(0.0f, 1.0f, 0.0f));
         glm::mat4 proj = glm::perspective(glm::radians(60.0f),
-                static_cast<float>(ctx.mSwapchain.GetWidth()) / static_cast<float>(ctx.mSwapchain.GetHeight()),
+                static_cast<float>(ctx.mSwapchain.GetWidth())
+                        / static_cast<float>(ctx.mSwapchain.GetHeight()),
                 0.1f, 200.0f);
         proj[1][1] *= -1; // Vulkan NDC: flip Y
-        const PushConstants pc{proj * view};
+        const glm::mat4 mvp = proj * view;
 
-        cmd.BindGraphicsPipeline(data->mPipeline);
-        cmd.SetViewport(ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight());
-        cmd.SetPushConstants(data->mPipeline, 0, sizeof(pc), &pc);
-        cmd.BindVertexBuffer(data->mVertexBuffer, 0);
-        cmd.BindIndexBuffer(data->mIndexBuffer);
-        cmd.DrawIndexed(static_cast<uint32_t>(kGridSize * kGridSize * 6), 1, 0, 0, 0);
+        const float clear[4] = {0.15f, 0.15f, 0.18f, 1.0f};
+        if (!data->mFrame.Acquire(ctx.mSwapchain)) {
+            return;
+        }
+        data->mRenderer.BeginFrame(cmd, data->mFrame, clear);
+
+        const moe::neo::PassDesc pass{"snow", {}, {}};
+        data->mRenderer.Execute(pass, [&](moe::neo::PassContext& context) {
+            moe::neo::DrawState state;
+            state.mCullMode = moe::rhi::CullMode::kNone; // terrain is viewable from below
+            context.SetState(state);
+            context.SetPushConstant(data->mPcMvp, &mvp, sizeof(mvp));
+            context.Draw(data->mMesh, *ctx.mAssets.GetProgram(data->mProgram));
+        });
+
+        data->mRenderer.EndFrame();
+        data->mFrame.Release();
     }
 
     void DrawUI(void* userdata, examples::AppContext&) {
@@ -472,9 +481,9 @@ namespace {
         data->mBrushSet.Destroy();
         data->mBuildSet.Destroy();
         data->mHeightReadback.Destroy();
-        data->mIndexBuffer.Destroy();
-        data->mVertexBuffer.Destroy();
+        data->mMesh.Destroy();
         data->mHeightBuffer.Destroy();
+        data->mRenderer.Destroy();
     }
 }// namespace
 
@@ -483,15 +492,14 @@ int main() {
     examples::AppCallbacks callbacks{};
     callbacks.mSetup = Setup;
     callbacks.mDrawIm3d = DrawIm3d;
-    callbacks.mRender = Render;
+    callbacks.mPostRender = PostRender;
     callbacks.mDrawUI = DrawUI;
     callbacks.mShutdown = Shutdown;
     callbacks.mUserdata = &data;
 
     examples::App app;
-    std::string error;
-    if (!app.Run("snow demo", 1280, 720, callbacks, error)) {
-        std::fprintf(stderr, "snow: app: %s\n", error.c_str());
+    if (!app.Run("snow demo", 1280, 720, callbacks)) {
+        std::fprintf(stderr, "snow: app: %s\n", moe::Error::Get().c_str());
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

@@ -62,7 +62,7 @@ namespace moe::neo {
 
         // Installs GLFW callbacks on the window (chains with any previous
         // callbacks, e.g. ImGui's). Call once, before DebugUI init.
-        bool Init(Window& window, std::string& error);
+        bool Init(Window& window);
 
         // Clears the per-frame edges and accumulated mouse deltas. Call once
         // at the end of each frame (after the demo consumed the state).

@@ -1,5 +1,6 @@
 #include "Neo/Renderer.hpp"
 
+#include <Core/Error.hpp>
 #include <Core/Logger.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/Image.hpp>
@@ -38,7 +39,6 @@ namespace moe::neo {
         rhi::Image mDepthImage;
         uint32_t mWidth{0};
         uint32_t mHeight{0};
-        std::string mLastError;
 
         // push constant name registry (lookup-once, then set by index). Each
         // field keeps its own value: different programs may place fields at
@@ -49,9 +49,22 @@ namespace moe::neo {
             std::string mName;
             uint32_t mOffset{0};
             uint32_t mSize{0};
+            bool mDirty{false};
             std::vector<uint8_t> mValue;
         };
         mutable std::vector<FieldReg> mFields;
+
+        // True when any field of `program` changed since it was last pushed
+        // to the command buffer; such fields force a (cheap) pipeline rebind
+        // so their values are recorded for the next draw.
+        bool HasDirtyFields(const rhi::ShaderProgram& program) const {
+            for (const auto& field : mFields) {
+                if (field.mProgram == &program && field.mDirty) {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         // ---- per-frame GL-style state (reset in BeginFrame; drawn commands
         // are recorded immediately, so later changes never affect them) ----
@@ -64,6 +77,10 @@ namespace moe::neo {
             uint32_t mBinding{0};
             const rhi::Sampler* mSampler{nullptr};
         };
+        struct BufferBinding {
+            uint32_t mBinding{0};
+            const rhi::Buffer* mBuffer{nullptr};
+        };
         struct InstanceBind {
             const rhi::Buffer* mBuffer{nullptr};
             uint32_t mStride{0};
@@ -72,12 +89,16 @@ namespace moe::neo {
         };
 
         DrawState mState;
+        Camera mCamera;
+        bool mCameraSet{false};
         RenderTargetHandle mTarget;
         RenderTarget* mTargetPtr{nullptr};
         std::array<ImageBinding, kMaxTextureBindings> mImages{};
         uint32_t mImageCount{0};
         std::array<SamplerBinding, kMaxTextureBindings> mSamplers{};
         uint32_t mSamplerCount{0};
+        std::array<BufferBinding, kMaxTextureBindings> mBuffers{};
+        uint32_t mBufferCount{0};
         InstanceBind mInstance;
         // (the per-frame value table was replaced by per-field values:
         // different programs may reuse the same push constant offsets)
@@ -95,12 +116,18 @@ namespace moe::neo {
         uint32_t mFrameWidth{0};
         uint32_t mFrameHeight{0};
         float mClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-        bool mDepthReady{false};
+        // main (swapchain) depth: tracked layout, transitioned once then kept
+        // as an attachment across frames
+        rhi::ImageLayout mDepthLayout{rhi::ImageLayout::kUndefined};
 
         // immediate-mode tracking
         bool mPassOpen{false};
         const char* mPassName{nullptr};
         RenderTarget* mCurrentTarget{nullptr};
+        // depth attachment owner of the open pass (null = the renderer's main
+        // depth, or no depth attachment); EndPass uses it for the deferred
+        // sampling transition
+        RenderTarget* mDepthTargetPtr{nullptr};
         uint64_t mCurrentPipelineHash{0};
 
         Cache<RenderTarget> mTargets;
@@ -116,6 +143,78 @@ namespace moe::neo {
 
         RenderTarget* ResolveTarget(RenderTargetHandle handle) {
             return handle.IsValid() ? mTargets.Get(handle) : nullptr;
+        }
+
+        // ---- attachment transitions (owner-tracked layout + sync) ----
+
+        // Transitions a target's color image to ColorAttachment. The tracked
+        // layout is the barrier source, so chained passes stay synchronized.
+        void EnsureColorAttachment(RenderTarget& target) {
+            if (target.mColorLayout == rhi::ImageLayout::kColorAttachment) {
+                return;
+            }
+            rhi::SyncInfo sync{};
+            sync.mSrcStage = target.mColorLayout == rhi::ImageLayout::kShaderReadOnly
+                    ? rhi::PipelineStage::kFragmentShader
+                    : rhi::PipelineStage::kTopOfPipe;
+            sync.mSrcAccess = target.mColorLayout == rhi::ImageLayout::kShaderReadOnly
+                    ? rhi::Access::kShaderRead
+                    : rhi::Access::kNone;
+            sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
+            sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
+            mCmd->ImageBarrier(*target.mImage, target.mColorLayout,
+                    rhi::ImageLayout::kColorAttachment, sync);
+            target.mColorLayout = rhi::ImageLayout::kColorAttachment;
+        }
+
+        // Same for a target's depth image (no-op when the target has none).
+        void EnsureDepthAttachment(RenderTarget& target) {
+            if (!target.mHasDepth || target.mDepthLayout == rhi::ImageLayout::kDepthStencilAttachment) {
+                return;
+            }
+            rhi::SyncInfo sync{};
+            sync.mSrcStage = target.mDepthLayout == rhi::ImageLayout::kShaderReadOnly
+                    ? rhi::PipelineStage::kFragmentShader
+                    : rhi::PipelineStage::kTopOfPipe;
+            sync.mSrcAccess = target.mDepthLayout == rhi::ImageLayout::kShaderReadOnly
+                    ? rhi::Access::kDepthStencilAttachmentRead
+                    : rhi::Access::kNone;
+            sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
+            sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
+            mCmd->ImageBarrier(*target.mDepthImage, target.mDepthLayout,
+                    rhi::ImageLayout::kDepthStencilAttachment, sync);
+            target.mDepthLayout = rhi::ImageLayout::kDepthStencilAttachment;
+        }
+
+        // Same for the renderer's own main depth (swapchain passes).
+        void EnsureMainDepthAttachment() {
+            if (mDepthLayout == rhi::ImageLayout::kDepthStencilAttachment) {
+                return;
+            }
+            rhi::SyncInfo sync{};
+            sync.mSrcStage = rhi::PipelineStage::kTopOfPipe;
+            sync.mSrcAccess = rhi::Access::kNone;
+            sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
+            sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
+            mCmd->ImageBarrier(mDepthImage, mDepthLayout,
+                    rhi::ImageLayout::kDepthStencilAttachment, sync);
+            mDepthLayout = rhi::ImageLayout::kDepthStencilAttachment;
+        }
+
+        // Returns a target's depth image to ShaderReadOnly after a pass, so
+        // later passes can sample it (deferred sampling transition).
+        void ReleaseDepthAttachment(RenderTarget& target) {
+            if (!target.mHasDepth || target.mDepthLayout == rhi::ImageLayout::kShaderReadOnly) {
+                return;
+            }
+            rhi::SyncInfo sync{};
+            sync.mSrcStage = rhi::PipelineStage::kEarlyFragmentTests;
+            sync.mSrcAccess = rhi::Access::kDepthStencilAttachmentWrite;
+            sync.mDstStage = rhi::PipelineStage::kFragmentShader;
+            sync.mDstAccess = rhi::Access::kDepthStencilAttachmentRead;
+            mCmd->ImageBarrier(*target.mDepthImage, target.mDepthLayout,
+                    rhi::ImageLayout::kShaderReadOnly, sync);
+            target.mDepthLayout = rhi::ImageLayout::kShaderReadOnly;
         }
 
         // Resolves a push constant member of the program by name (registry
@@ -226,10 +325,9 @@ namespace moe::neo {
     Renderer::~Renderer() = default;
 
     bool Renderer::Init(rhi::Device& device, rhi::DefaultPipelineCache& cache,
-            uint32_t width, uint32_t height, std::string& error) {
+            uint32_t width, uint32_t height) {
         if (mImpl->mDevice != nullptr) {
-            error = "Renderer already initialized";
-            return false;
+            return moe::Fail("Renderer already initialized");
         }
         mImpl->mDevice = &device;
         mImpl->mCache = &cache;
@@ -243,9 +341,8 @@ namespace moe::neo {
         depthInfo.mFormat = rhi::Format::kD32Float;
         depthInfo.mUsage = rhi::ImageUsage::kDepthAttachment;
         if (!device.CreateImage(depthInfo, mImpl->mDepthImage)) {
-            error = "Renderer: depth image: " + device.GetLastError();
             mImpl->mDevice = nullptr;
-            return false;
+            return moe::Fail("Renderer: depth image: " + moe::Error::Get());
         }
         mImpl->mStatsTime = std::chrono::steady_clock::now();
         moe::Logger::info("Renderer initialized ({}x{})", width, height);
@@ -288,14 +385,17 @@ namespace moe::neo {
         mImpl->mFrameHeight = frame.GetHeight();
         std::memcpy(mImpl->mClearColor, clearColor, sizeof(float) * 4);
         mImpl->mState = DrawState{};
+        mImpl->mCameraSet = false;
         mImpl->mTarget = {};
         mImpl->mTargetPtr = nullptr;
         mImpl->mImageCount = 0;
         mImpl->mSamplerCount = 0;
+        mImpl->mBufferCount = 0;
         mImpl->mInstance = Impl::InstanceBind{};
         mImpl->mPassOpen = false;
         mImpl->mPassName = nullptr;
         mImpl->mCurrentTarget = nullptr;
+        mImpl->mDepthTargetPtr = nullptr;
         mImpl->mCurrentPipelineHash = 0;
     }
 
@@ -310,6 +410,7 @@ namespace moe::neo {
                 impl.mCmd->EndRendering();
             }
             impl.mPassOpen = false;
+            impl.mDepthTargetPtr = nullptr;
         }
 
         // per-second stats (avoids log flooding while keeping visibility)
@@ -334,6 +435,20 @@ namespace moe::neo {
         mImpl->mState = state;
     }
 
+    void Renderer::SetCameraInternal(const Camera& camera) {
+        mImpl->mCamera = camera;
+        mImpl->mCameraSet = true;
+    }
+
+    const Camera* Renderer::GetCameraInternal() const {
+        return mImpl->mCameraSet ? &mImpl->mCamera : nullptr;
+    }
+
+    void Renderer::ClearTextureBindingsInternal() {
+        mImpl->mImageCount = 0;
+        mImpl->mSamplerCount = 0;
+    }
+
     void Renderer::BindImageInternal(uint32_t binding, const rhi::Image& image) {
         for (uint32_t i = 0; i < mImpl->mImageCount; ++i) {
             if (mImpl->mImages[i].mBinding == binding) {
@@ -342,7 +457,7 @@ namespace moe::neo {
             }
         }
         if (mImpl->mImageCount >= kMaxTextureBindings) {
-            mImpl->mLastError = "BindImage: per-frame binding limit exceeded";
+            moe::Error::Set("BindImage: per-frame binding limit exceeded");
             return;
         }
         mImpl->mImages[mImpl->mImageCount++] = {binding, &image};
@@ -356,16 +471,30 @@ namespace moe::neo {
             }
         }
         if (mImpl->mSamplerCount >= kMaxTextureBindings) {
-            mImpl->mLastError = "BindSampler: per-frame binding limit exceeded";
+            moe::Error::Set("BindSampler: per-frame binding limit exceeded");
             return;
         }
         mImpl->mSamplers[mImpl->mSamplerCount++] = {binding, &sampler};
     }
 
+    void Renderer::BindBufferInternal(uint32_t binding, const rhi::Buffer& buffer) {
+        for (uint32_t i = 0; i < mImpl->mBufferCount; ++i) {
+            if (mImpl->mBuffers[i].mBinding == binding) {
+                mImpl->mBuffers[i].mBuffer = &buffer;
+                return;
+            }
+        }
+        if (mImpl->mBufferCount >= kMaxTextureBindings) {
+            moe::Error::Set("BindBuffer: per-frame binding limit exceeded");
+            return;
+        }
+        mImpl->mBuffers[mImpl->mBufferCount++] = {binding, &buffer};
+    }
+
     void Renderer::BindInstanceBufferInternal(const rhi::Buffer& buffer, uint32_t stride,
             const InstanceAttribute* attributes, uint32_t attributeCount) {
         if (attributeCount > kMaxInstanceAttributes) {
-            mImpl->mLastError = "BindInstanceBuffer: too many attributes";
+            moe::Error::Set("BindInstanceBuffer: too many attributes");
             return;
         }
         mImpl->mInstance.mBuffer = &buffer;
@@ -380,19 +509,27 @@ namespace moe::neo {
         return mImpl->LookupField(program, name);
     }
 
+    uint32_t Renderer::GetPushConstantSize(int32_t index) const {
+        if (index < 0 || static_cast<size_t>(index) >= mImpl->mFields.size()) {
+            return 0;
+        }
+        return mImpl->mFields[static_cast<size_t>(index)].mSize;
+    }
+
     bool Renderer::SetPushConstantInternal(int32_t index, const void* data, size_t size) {
         if (index < 0 || static_cast<size_t>(index) >= mImpl->mFields.size()) {
-            mImpl->mLastError = "SetPushConstant: invalid index";
+            moe::Error::Set("SetPushConstant: invalid index");
             return false;
         }
         auto& field = mImpl->mFields[static_cast<size_t>(index)];
         if (size != field.mSize) {
-            mImpl->mLastError = "SetPushConstant: size mismatch (shader expects " +
-                    std::to_string(field.mSize) + ", got " + std::to_string(size) + ")";
+            moe::Error::Set("SetPushConstant: size mismatch (shader expects " +
+                    std::to_string(field.mSize) + ", got " + std::to_string(size) + ")");
             return false;
         }
         field.mValue.assign(static_cast<const uint8_t*>(data),
                 static_cast<const uint8_t*>(data) + size);
+        field.mDirty = true;
         return true;
     }
 
@@ -429,9 +566,9 @@ namespace moe::neo {
     // ---- render targets ----
 
     RenderTargetHandle Renderer::CreateRenderTarget(uint32_t width, uint32_t height,
-            rhi::Format format, bool withDepth, std::string& error) {
+            rhi::Format format, bool withDepth) {
         if (width == 0 || height == 0) {
-            error = "CreateRenderTarget: zero size";
+            moe::Error::Set("CreateRenderTarget: zero size");
             return {};
         }
         RenderTarget target;
@@ -450,7 +587,7 @@ namespace moe::neo {
         colorInfo.mUsage = rhi::ImageUsage::kColorAttachment | rhi::ImageUsage::kSampled
                 | rhi::ImageUsage::kTransferSrc;
         if (!mImpl->mDevice->CreateImage(colorInfo, *target.mImage)) {
-            error = "CreateRenderTarget: color image: " + mImpl->mDevice->GetLastError();
+            moe::Error::Set("CreateRenderTarget: color image: " + moe::Error::Get());
             return {};
         }
         if (withDepth) {
@@ -461,7 +598,7 @@ namespace moe::neo {
             depthInfo.mFormat = rhi::Format::kD32Float;
             depthInfo.mUsage = rhi::ImageUsage::kDepthAttachment | rhi::ImageUsage::kSampled;
             if (!mImpl->mDevice->CreateImage(depthInfo, *target.mDepthImage)) {
-                error = "CreateRenderTarget: depth image: " + mImpl->mDevice->GetLastError();
+                moe::Error::Set("CreateRenderTarget: depth image: " + moe::Error::Get());
                 target.mImage->Destroy();
                 return {};
             }
@@ -475,7 +612,7 @@ namespace moe::neo {
     void Renderer::DestroyRenderTarget(RenderTargetHandle handle) {
         RenderTarget* target = mImpl->mTargets.Get(handle);
         if (target == nullptr) {
-            mImpl->mLastError = "DestroyRenderTarget: stale handle";
+            moe::Error::Set("DestroyRenderTarget: stale handle");
             return;
         }
         const uint32_t width = target->mWidth;
@@ -507,64 +644,56 @@ namespace moe::neo {
             impl.mPassOpen = false;
         }
 
-        RenderTarget* target = impl.ResolveTarget(desc.mTarget);
-        impl.mCurrentTarget = target;
-        impl.mTarget = desc.mTarget;
-        impl.mTargetPtr = target;
+        // ---- resolve attachments (own or borrowed from another target) ----
+        const bool swapchainColor = !desc.mColor.mTarget.IsValid();
+        RenderTarget* colorTarget = swapchainColor ? nullptr : impl.ResolveTarget(desc.mColor.mTarget);
+        if (!swapchainColor && colorTarget == nullptr) {
+            moe::Error::Set("BeginPass: color target is stale");
+            return;
+        }
+
+        RenderTarget* depthTarget = nullptr;
+        if (desc.mDepth.mTarget.IsValid()) {
+            depthTarget = impl.ResolveTarget(desc.mDepth.mTarget);
+            if (depthTarget == nullptr || !depthTarget->mHasDepth) {
+                moe::Error::Set("BeginPass: depth target is stale or has no depth");
+                return;
+            }
+        } else if (colorTarget != nullptr && colorTarget->mHasDepth) {
+            depthTarget = colorTarget; // the color target's own depth
+        }
+        // swapchain passes fall back to the renderer's main depth
+        const bool mainDepth = depthTarget == nullptr && swapchainColor;
+
+        impl.mCurrentTarget = colorTarget;
+        impl.mTarget = desc.mColor.mTarget;
+        impl.mTargetPtr = colorTarget;
+        impl.mDepthTargetPtr = depthTarget;
         impl.mPassName = desc.mName != nullptr ? desc.mName : "?";
         impl.mCurrentPipelineHash = 0; // pipelines are rebound per pass
 
-        rhi::SyncInfo sync{};
-        if (target != nullptr) {
-            // target image: ShaderReadOnly/Undefined -> ColorAttachment (pass-external)
-            if (target->mColorLayout != rhi::ImageLayout::kColorAttachment) {
-                sync.mSrcStage = target->mColorLayout == rhi::ImageLayout::kShaderReadOnly
-                        ? rhi::PipelineStage::kFragmentShader
-                        : rhi::PipelineStage::kTopOfPipe;
-                sync.mSrcAccess = target->mColorLayout == rhi::ImageLayout::kShaderReadOnly
-                        ? rhi::Access::kShaderRead
-                        : rhi::Access::kNone;
-                sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
-                sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
-                cmd.ImageBarrier(*target->mImage, target->mColorLayout,
-                        rhi::ImageLayout::kColorAttachment, sync);
-                target->mColorLayout = rhi::ImageLayout::kColorAttachment;
-            }
-            if (target->mHasDepth) {
-                const rhi::ImageLayout depthLayout = target->mDepthLayout;
-                if (depthLayout != rhi::ImageLayout::kDepthStencilAttachment) {
-                    sync.mSrcStage = depthLayout == rhi::ImageLayout::kShaderReadOnly
-                            ? rhi::PipelineStage::kFragmentShader
-                            : rhi::PipelineStage::kTopOfPipe;
-                    sync.mSrcAccess = depthLayout == rhi::ImageLayout::kShaderReadOnly
-                            ? rhi::Access::kDepthStencilAttachmentRead
-                            : rhi::Access::kNone;
-                    sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
-                    sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
-                    cmd.ImageBarrier(*target->mDepthImage, depthLayout,
-                            rhi::ImageLayout::kDepthStencilAttachment, sync);
-                    target->mDepthLayout = rhi::ImageLayout::kDepthStencilAttachment;
-                }
-            }
-            cmd.BeginRendering(*target->mImage, impl.mClearColor,
-                    target->mHasDepth ? target->mDepthImage.get() : nullptr,
-                    1.0f, desc.mLoadOp);
-            cmd.SetViewport(target->mWidth, target->mHeight);
+        // ---- layout transitions + sync (owner-tracked) ----
+        if (colorTarget != nullptr) {
+            impl.EnsureColorAttachment(*colorTarget);
+        }
+        if (depthTarget != nullptr) {
+            impl.EnsureDepthAttachment(*depthTarget);
+        } else if (mainDepth) {
+            impl.EnsureMainDepthAttachment();
+        }
+
+        const rhi::Image* depthImage = depthTarget != nullptr ? depthTarget->mDepthImage.get()
+                : (mainDepth ? &impl.mDepthImage : nullptr);
+        const rhi::LoadOp depthLoadOp = desc.mDepth.mLoadOp;
+
+        if (colorTarget != nullptr) {
+            cmd.BeginRendering(*colorTarget->mImage, impl.mClearColor, depthImage, 1.0f,
+                    desc.mColor.mLoadOp, depthLoadOp);
+            cmd.SetViewport(colorTarget->mWidth, colorTarget->mHeight);
         } else {
-            // main depth: first frame transitions undefined -> depth attachment
-            // (pass-external, must precede BeginRendering)
-            if (!impl.mDepthReady) {
-                sync.mSrcStage = rhi::PipelineStage::kTopOfPipe;
-                sync.mSrcAccess = rhi::Access::kNone;
-                sync.mDstStage = rhi::PipelineStage::kEarlyFragmentTests;
-                sync.mDstAccess = rhi::Access::kDepthStencilAttachmentWrite;
-                cmd.ImageBarrier(impl.mDepthImage, rhi::ImageLayout::kUndefined,
-                        rhi::ImageLayout::kDepthStencilAttachment, sync);
-                impl.mDepthReady = true;
-            }
-            // swapchain: the Swapchain owns its layout state; this call
-            // transitions from whatever it currently is to ColorAttachment.
-            impl.mSwapchain->BeginRendering(cmd, impl.mClearColor, desc.mLoadOp);
+            // the Swapchain owns its color image's layout state
+            impl.mSwapchain->BeginRendering(cmd, impl.mClearColor, desc.mColor.mLoadOp,
+                    depthImage, 1.0f, depthLoadOp);
             cmd.SetViewport(impl.mFrameWidth, impl.mFrameHeight);
         }
         impl.mPassOpen = true;
@@ -573,15 +702,20 @@ namespace moe::neo {
     void Renderer::EndPass(const PassDesc& desc) {
         Impl& impl = *mImpl;
         if (!impl.mPassOpen) {
-            impl.mLastError = "EndPass: no active pass";
+            moe::Error::Set("EndPass: no active pass");
             return;
         }
         impl.mPassOpen = false;
 
         if (impl.mCurrentTarget == nullptr) {
             // swapchain pass: Swapchain::EndRendering ends the pass and moves
-            // the image to PresentSrc (tracked by the swapchain).
+            // the image to PresentSrc (tracked by the swapchain). A borrowed
+            // depth still returns to a sampleable layout.
             impl.mSwapchain->EndRendering(*impl.mCmd);
+            if (impl.mDepthTargetPtr != nullptr) {
+                impl.ReleaseDepthAttachment(*impl.mDepthTargetPtr);
+            }
+            impl.mDepthTargetPtr = nullptr;
             return;
         }
 
@@ -589,10 +723,10 @@ namespace moe::neo {
 
         // Deferred sampling transition (vulkan 1.3 dynamic rendering forbids
         // pipeline barriers inside a render pass): immediately after the pass,
-        // move the target's color (and depth, for depth sampling like clouds)
-        // to their read layouts, so later passes can sample them without any
-        // barrier. The next pass that draws to it transitions it back in
-        // BeginPass.
+        // move the color attachment (and the depth attachment, own or
+        // borrowed) to their read layouts, so later passes can sample them
+        // without any barrier. The next pass that draws to one transitions it
+        // back in BeginPass.
         {
             RenderTarget* target = impl.mCurrentTarget;
             rhi::CommandList& cmd = *impl.mCmd;
@@ -606,15 +740,10 @@ namespace moe::neo {
                         rhi::ImageLayout::kShaderReadOnly, sync);
                 target->mColorLayout = rhi::ImageLayout::kShaderReadOnly;
             }
-            if (target->mHasDepth && target->mDepthLayout != rhi::ImageLayout::kShaderReadOnly) {
-                sync.mSrcStage = rhi::PipelineStage::kEarlyFragmentTests;
-                sync.mSrcAccess = rhi::Access::kDepthStencilAttachmentWrite;
-                sync.mDstStage = rhi::PipelineStage::kFragmentShader;
-                sync.mDstAccess = rhi::Access::kDepthStencilAttachmentRead;
-                cmd.ImageBarrier(*target->mDepthImage, rhi::ImageLayout::kDepthStencilAttachment,
-                        rhi::ImageLayout::kShaderReadOnly, sync);
-                target->mDepthLayout = rhi::ImageLayout::kShaderReadOnly;
-            }
+        }
+        if (impl.mDepthTargetPtr != nullptr) {
+            impl.ReleaseDepthAttachment(*impl.mDepthTargetPtr);
+            impl.mDepthTargetPtr = nullptr;
         }
     }
 
@@ -626,19 +755,21 @@ namespace moe::neo {
         rhi::CommandList& cmd = *impl.mCmd;
 
         if (!impl.mPassOpen) {
-            impl.mLastError = "Draw: no active pass";
+            moe::Error::Set("Draw: no active pass");
             return;
         }
 
-        // pipeline: collect/cache; rebind only when the hash changes
+        // pipeline: collect/cache; rebind when the hash changes or when a
+        // push constant of this program changed since the last draw (the
+        // rebind is what records the values into the command buffer)
         const bool useInstancing = instanceCount > 1;
         const rhi::GraphicsPipelineState state =
                 impl.BuildPipelineState(mesh, program, topology, useInstancing);
         const uint64_t hash = state.GetHash();
-        if (hash != impl.mCurrentPipelineHash) {
+        if (hash != impl.mCurrentPipelineHash || impl.HasDirtyFields(program)) {
             rhi::GraphicsPipeline pipeline;
             if (!impl.mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
-                impl.mLastError = "Draw: pipeline: " + impl.mDevice->GetLastError();
+                moe::Error::Set("Draw: pipeline: " + moe::Error::Get());
                 return;
             }
             cmd.BindGraphicsPipeline(pipeline);
@@ -646,11 +777,12 @@ namespace moe::neo {
             // replay push constants: per field, only those this program
             // declares and the user has set (fields of different programs may
             // share offsets; each keeps its own value)
-            for (const auto& field : impl.mFields) {
+            for (auto& field : impl.mFields) {
                 if (field.mProgram != &program || field.mValue.empty()) {
                     continue;
                 }
                 cmd.SetPushConstants(pipeline, field.mOffset, field.mSize, field.mValue.data());
+                field.mDirty = false;
             }
 
             impl.mCurrentPipelineHash = hash;
@@ -658,7 +790,7 @@ namespace moe::neo {
 
         // images/samplers: rebuild the descriptor set per draw (correct and
         // cheap at teaching scale)
-        if (impl.mImageCount > 0 || impl.mSamplerCount > 0) {
+        if (impl.mImageCount > 0 || impl.mSamplerCount > 0 || impl.mBufferCount > 0) {
             rhi::GraphicsPipeline pipeline;
             if (impl.mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
                 rhi::DescriptorSetLayout layout;
@@ -674,12 +806,16 @@ namespace moe::neo {
                             written &= set->WriteSampler(impl.mSamplers[i].mBinding,
                                     *impl.mSamplers[i].mSampler);
                         }
+                        for (uint32_t i = 0; i < impl.mBufferCount; ++i) {
+                            written &= set->WriteBuffer(impl.mBuffers[i].mBinding,
+                                    *impl.mBuffers[i].mBuffer);
+                        }
                         if (written) {
                             cmd.BindDescriptorSet(pipeline, *set, 0);
                             impl.mFrameSets.push_back(std::move(set));
                         } else {
-                            impl.mLastError = "Draw: descriptor write failed "
-                                    "(binding not declared in the shader?)";
+                            moe::Error::Set("Draw: descriptor write failed "
+                                    "(binding not declared in the shader?)");
                             set->Destroy();
                         }
                     }
@@ -700,14 +836,26 @@ namespace moe::neo {
         impl.mStatsDraws += 1;
     }
 
-    const std::string& Renderer::GetLastError() const {
-        return mImpl->mLastError;
-    }
-
     // ---- PassContext: forwards to the renderer's internals ----
 
     void PassContext::SetState(const DrawState& state) {
         mRenderer->SetStateInternal(state);
+    }
+
+    void PassContext::SetCamera(const Camera& camera) {
+        mRenderer->SetCameraInternal(camera);
+    }
+
+    void PassContext::ClearTextureBindings() {
+        mRenderer->ClearTextureBindingsInternal();
+    }
+
+    int32_t PassContext::GetPushConstant(const rhi::ShaderProgram& program, const char* name) const {
+        return mRenderer->GetPushConstant(program, name);
+    }
+
+    uint32_t PassContext::GetPushConstantSize(int32_t index) const {
+        return mRenderer->GetPushConstantSize(index);
     }
 
     void PassContext::SetPushConstant(int32_t index, const void* data, size_t size) {
@@ -720,6 +868,10 @@ namespace moe::neo {
 
     void PassContext::BindSampler(uint32_t binding, const rhi::Sampler& sampler) {
         mRenderer->BindSamplerInternal(binding, sampler);
+    }
+
+    void PassContext::BindBuffer(uint32_t binding, const rhi::Buffer& buffer) {
+        mRenderer->BindBufferInternal(binding, buffer);
     }
 
     void PassContext::BindInstanceBuffer(const rhi::Buffer& buffer, uint32_t stride,

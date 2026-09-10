@@ -1,5 +1,8 @@
 #include <Neo/Uploader.hpp>
 
+#include <Core/Defer.hpp>
+#include "TestSupport.hpp"
+#include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/PipelineCache.hpp>
 
@@ -10,17 +13,15 @@
 
 namespace {
     bool ReadBack(moe::rhi::Device& device, const moe::rhi::Buffer& src, moe::rhi::Buffer& outReadback,
-            moe::rhi::CommandList& outCmd, std::string& error) {
+            moe::rhi::CommandList& outCmd) {
         moe::rhi::BufferCreateInfo readbackInfo{};
         readbackInfo.mSize = src.GetSize();
         readbackInfo.mUsage = moe::rhi::BufferUsage::kTransferDst;
         readbackInfo.mCpuVisible = true;
         if (!device.CreateBuffer(readbackInfo, outReadback)) {
-            error = device.GetLastError();
             return false;
         }
         if (!device.CreateCommandList(outCmd)) {
-            error = device.GetLastError();
             return false;
         }
         outCmd.Begin();
@@ -31,8 +32,7 @@ namespace {
 }// namespace
 
 int main() {
-    std::string error;
-
+    constexpr const char* kTestName = "UploadMesh smoke";
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -49,12 +49,21 @@ int main() {
     moe::neo::Mesh mesh;
     moe::neo::MeshPrimitive prim;
 
+
+    moe::Defer cleanup([&] {
+        indexCmd.Destroy();
+        vertexCmd.Destroy();
+        indexReadback.Destroy();
+        vertexReadback.Destroy();
+        gpu.Destroy();
+        cache.Destroy();
+        device.Destroy();
+    });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
-    if (!uploader.Init(device, error)) {
-        goto cleanup;
+    if (!uploader.Init(device)) {
+        return moe::test::Fail(kTestName);
     }
 
     // CPU quad: 2 triangles, positions + normals + uvs
@@ -67,23 +76,21 @@ int main() {
     prim.mIndices = {0, 1, 2, 1, 3, 2};
     mesh.mPrimitives.push_back(std::move(prim));
 
-    if (!uploader.UploadMesh(mesh, gpu, error)) {
-        goto cleanup;
+    if (!uploader.UploadMesh(mesh, gpu)) {
+        return moe::test::Fail(kTestName);
     }
     if (gpu.mVertexCount != 4 || gpu.mIndexCount != 6 || gpu.mVertexStride != 32) {
-        error = "uploaded mesh metadata mismatch";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "uploaded mesh metadata mismatch");
     }
 
     // read back the vertex buffer and verify interleaved layout
-    if (!ReadBack(device, gpu.mVertexBuffer, vertexReadback, vertexCmd, error)) {
-        goto cleanup;
+    if (!ReadBack(device, gpu.mVertexBuffer, vertexReadback, vertexCmd)) {
+        return moe::test::Fail(kTestName);
     }
     {
         const auto* data = static_cast<const uint8_t*>(vertexReadback.Map());
         if (data == nullptr) {
-            error = "failed to map vertex readback";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map vertex readback");
         }
         for (uint32_t i = 0; i < 4; ++i) {
             glm::vec3 pos, nrm;
@@ -94,31 +101,28 @@ int main() {
             if (pos != mesh.mPrimitives[0].mPositions[i]
                     || nrm != mesh.mPrimitives[0].mNormals[i]
                     || uv != mesh.mPrimitives[0].mUv0[i]) {
-                error = "vertex data mismatch at vertex " + std::to_string(i);
                 vertexReadback.Unmap();
-                goto cleanup;
+                return moe::test::Fail(kTestName);
             }
         }
         vertexReadback.Unmap();
     }
 
     // read back the index buffer
-    if (!ReadBack(device, gpu.mIndexBuffer, indexReadback, indexCmd, error)) {
-        goto cleanup;
+    if (!ReadBack(device, gpu.mIndexBuffer, indexReadback, indexCmd)) {
+        return moe::test::Fail(kTestName);
     }
     {
         const auto* data = static_cast<const uint8_t*>(indexReadback.Map());
         if (data == nullptr) {
-            error = "failed to map index readback";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map index readback");
         }
         uint32_t idx[6];
         std::memcpy(idx, data, sizeof(idx));
         for (uint32_t i = 0; i < 6; ++i) {
             if (idx[i] != mesh.mPrimitives[0].mIndices[i]) {
-                error = "index data mismatch at " + std::to_string(i);
                 indexReadback.Unmap();
-                goto cleanup;
+                return moe::test::Fail(kTestName);
             }
         }
         indexReadback.Unmap();
@@ -126,18 +130,5 @@ int main() {
 
     std::printf("UploadMesh smoke passed.\n");
 
-cleanup:
-    indexCmd.Destroy();
-    vertexCmd.Destroy();
-    indexReadback.Destroy();
-    vertexReadback.Destroy();
-    gpu.Destroy();
-    cache.Destroy();
-    device.Destroy();
-
-    if (!error.empty()) {
-        std::fprintf(stderr, "UploadMesh smoke FAILED: %s\n", error.c_str());
-        return EXIT_FAILURE;
-    }
     return EXIT_SUCCESS;
 }

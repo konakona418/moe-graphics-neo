@@ -1,12 +1,14 @@
 #include <examples/common/App.hpp>
 
+#include <Core/Error.hpp>
+#include <Neo/Assets.hpp>
+#include <Neo/Renderer.hpp>
+#include <Neo/SwapchainImage.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
 #include <RHI/Image.hpp>
 #include <RHI/Pipeline.hpp>
-#include <RHI/RenderGraph.hpp>
 #include <RHI/Sampler.hpp>
-#include <RHI/Shader.hpp>
 
 #ifndef GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -17,7 +19,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <string>
 
 namespace {
     constexpr uint32_t kNoiseSize = 128;
@@ -45,67 +46,38 @@ namespace {
         glm::vec3 mBoxMax;
     };
 
-    // Compute pass: regenerates the 3D cloud noise volume.
-    struct NoisePass : moe::rhi::Pass {
-        moe::rhi::ComputePipeline* mPipeline{nullptr};
-        moe::rhi::DescriptorSet* mSet{nullptr};
-        NoisePushConstants* mPc{nullptr};
-
-        bool Execute(moe::rhi::CommandList& cmd) override {
-            cmd.SetPushConstants(*mPipeline, 0, sizeof(NoisePushConstants), mPc);
-            cmd.BindDescriptorSet(*mPipeline, *mSet, 0);
-            cmd.Dispatch(*mPipeline, kNoiseSize / 4, kNoiseSize / 4, kNoiseSize / 4);
-            return true;
-        }
-    };
-
-    // Graphics pass: raymarches the volume into the offscreen color target.
-    struct CloudPass : moe::rhi::Pass {
-        moe::rhi::GraphicsPipeline* mPipeline{nullptr};
-        moe::rhi::DescriptorSet* mSet{nullptr};
-        moe::rhi::Image* mColorTarget{nullptr};
-        CloudPushConstants* mPc{nullptr};
-        uint32_t mWidth{0};
-        uint32_t mHeight{0};
-
-        bool Execute(moe::rhi::CommandList& cmd) override {
-            const float clear[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-            cmd.BeginRendering(*mColorTarget, clear);
-            cmd.BindGraphicsPipeline(*mPipeline);
-            cmd.SetViewport(mWidth, mHeight);
-            cmd.BindDescriptorSet(*mPipeline, *mSet, 0);
-            cmd.SetPushConstants(*mPipeline, 0, sizeof(CloudPushConstants), mPc);
-            cmd.Draw(3, 1, 0, 0);
-            cmd.EndRendering();
-            return true;
-        }
-    };
-
+    // Volumetric clouds: a raw compute pass regenerates the 3D noise volume
+    // between Renderer passes (the escape hatch), then a Renderer fullscreen
+    // pass raymarches it into the swapchain.
     struct CloudsData {
+        moe::neo::Renderer mRenderer;
+        moe::neo::SwapchainImage mFrame;
+        moe::neo::ProgramHandle mCloudProgram;
         moe::rhi::Image mNoiseTex;
-        moe::rhi::Image mColorTarget;
         moe::rhi::Sampler mSampler;
         moe::rhi::Shader mNoiseComp;
-        moe::rhi::Shader mVert;
-        moe::rhi::Shader mFrag;
         moe::rhi::ShaderProgram mNoiseProgram;
-        moe::rhi::ShaderProgram mCloudProgram;
         moe::rhi::ComputePipeline mNoisePipeline;
-        moe::rhi::GraphicsPipeline mCloudPipeline;
         moe::rhi::DescriptorSetLayout mNoiseSetLayout;
-        moe::rhi::DescriptorSetLayout mCloudSetLayout;
         moe::rhi::DescriptorSet mNoiseSet;
-        moe::rhi::DescriptorSet mCloudSet;
-        moe::rhi::RenderGraph mGraph;
+        moe::rhi::ImageLayout mNoiseLayout{moe::rhi::ImageLayout::kUndefined};
         NoisePushConstants mNoisePc{};
         CloudPushConstants mCloudPc{};
-        NoisePass mNoisePass;
-        CloudPass mCloudPass;
+        int32_t mPcCameraPos{-1};
+        int32_t mPcForward{-1};
+        int32_t mPcRight{-1};
+        int32_t mPcUp{-1};
+        int32_t mPcSunDir{-1};
+        int32_t mPcTanHalfFov{-1};
+        int32_t mPcAspect{-1};
+        int32_t mPcTime{-1};
+        int32_t mPcBoxMin{-1};
+        int32_t mPcBoxMax{-1};
+        float mAngle{0.0f};
     };
 
     bool Setup(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<CloudsData*>(userdata);
-        std::string error;
 
         moe::rhi::ImageCreateInfo noiseInfo{};
         noiseInfo.mType = moe::rhi::ImageType::k3D;
@@ -115,134 +87,64 @@ namespace {
         noiseInfo.mFormat = moe::rhi::Format::kR8G8B8A8Unorm;
         noiseInfo.mUsage = moe::rhi::ImageUsage::kStorage | moe::rhi::ImageUsage::kSampled;
         if (!ctx.mDevice.CreateImage(noiseInfo, data->mNoiseTex)) {
-            std::fprintf(stderr, "clouds: noise image: %s\n", ctx.mDevice.GetLastError().c_str());
-            return false;
-        }
-
-        moe::rhi::ImageCreateInfo targetInfo{};
-        targetInfo.mType = moe::rhi::ImageType::k2D;
-        targetInfo.mWidth = ctx.mSwapchain.GetWidth();
-        targetInfo.mHeight = ctx.mSwapchain.GetHeight();
-        targetInfo.mDepth = 1;
-        targetInfo.mFormat = ctx.mSwapchain.GetFormat();
-        targetInfo.mUsage = moe::rhi::ImageUsage::kColorAttachment | moe::rhi::ImageUsage::kTransferSrc;
-        if (!ctx.mDevice.CreateImage(targetInfo, data->mColorTarget)) {
-            std::fprintf(stderr, "clouds: color target: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "clouds: noise image: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
         moe::rhi::SamplerCreateInfo samplerInfo{};
         if (!ctx.mDevice.CreateSampler(samplerInfo, data->mSampler)) {
-            std::fprintf(stderr, "clouds: sampler: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "clouds: sampler: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
+        // raw compute pipeline for the noise volume (outside the Renderer)
         if (!data->mNoiseComp.Load(MOE_SOURCE_DIR "/shaders/examples/clouds_noise.comp.spv",
-                        moe::rhi::ShaderStage::kCompute)
-                || !data->mVert.Load(MOE_SOURCE_DIR "/shaders/examples/clouds.vert.spv",
-                        moe::rhi::ShaderStage::kVertex)
-                || !data->mFrag.Load(MOE_SOURCE_DIR "/shaders/examples/clouds.frag.spv",
-                        moe::rhi::ShaderStage::kFragment)) {
-            std::fprintf(stderr, "clouds: shader load failed\n");
+                    moe::rhi::ShaderStage::kCompute)
+                || !data->mNoiseProgram.AddShader(data->mNoiseComp)) {
+            std::fprintf(stderr, "clouds: noise shader: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        if (!data->mNoiseProgram.AddShader(data->mNoiseComp)
-                || !data->mCloudProgram.AddShader(data->mVert)
-                || !data->mCloudProgram.AddShader(data->mFrag)) {
-            std::fprintf(stderr, "clouds: program add failed\n");
-            return false;
-        }
-
         moe::rhi::ComputePipelineState computeState{};
         computeState.mProgram = &data->mNoiseProgram;
-        if (!ctx.mDevice.GetOrCreateComputePipeline(computeState, data->mNoisePipeline)) {
-            std::fprintf(stderr, "clouds: compute pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
+        if (!ctx.mDevice.GetOrCreateComputePipeline(computeState, data->mNoisePipeline)
+                || !data->mNoisePipeline.GetDescriptorSetLayout(0, data->mNoiseSetLayout)
+                || !ctx.mDevice.CreateDescriptorSet(data->mNoiseSetLayout, data->mNoiseSet)
+                || !data->mNoiseSet.WriteImage(0, data->mNoiseTex,
+                        moe::rhi::DescriptorType::kStorageImage)) {
+            std::fprintf(stderr, "clouds: noise pipeline/set: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
-        moe::rhi::GraphicsPipelineState graphicsState{};
-        graphicsState.mProgram = &data->mCloudProgram;
-        graphicsState.mTopology = moe::rhi::PrimitiveTopology::kTriangleList;
-        graphicsState.mRaster.mCullMode = moe::rhi::CullMode::kNone;
-        graphicsState.mColorFormatCount = 1;
-        graphicsState.mColorFormats[0] = ctx.mSwapchain.GetFormat();
-        graphicsState.mBlendAttachmentCount = 1;
-        if (!ctx.mDevice.GetOrCreateGraphicsPipeline(graphicsState, data->mCloudPipeline)) {
-            std::fprintf(stderr, "clouds: graphics pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
+        // content layer for the raymarch program + renderer
+        data->mCloudProgram = ctx.mAssets.LoadGraphicsProgram(
+                MOE_SOURCE_DIR "/shaders/examples/clouds.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/clouds.frag.spv");
+        if (!data->mCloudProgram.IsValid()) {
+            std::fprintf(stderr, "clouds: cloud shader: %s\n", moe::Error::Get().c_str());
+            return false;
+        }
+        if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
+                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight())) {
+            std::fprintf(stderr, "clouds: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
-        if (!data->mNoisePipeline.GetDescriptorSetLayout(0, data->mNoiseSetLayout)
-                || !data->mCloudPipeline.GetDescriptorSetLayout(0, data->mCloudSetLayout)) {
-            std::fprintf(stderr, "clouds: no descriptor set layout 0\n");
-            return false;
-        }
-        if (!ctx.mDevice.CreateDescriptorSet(data->mNoiseSetLayout, data->mNoiseSet)
-                || !ctx.mDevice.CreateDescriptorSet(data->mCloudSetLayout, data->mCloudSet)) {
-            std::fprintf(stderr, "clouds: descriptor set: %s\n", ctx.mDevice.GetLastError().c_str());
-            return false;
-        }        if (!data->mNoiseSet.WriteImage(0, data->mNoiseTex, moe::rhi::DescriptorType::kStorageImage)
-                || !data->mCloudSet.WriteImage(0, data->mNoiseTex, moe::rhi::DescriptorType::kSampledImage)
-                || !data->mCloudSet.WriteSampler(1, data->mSampler)) {
-            std::fprintf(stderr, "clouds: descriptor write failed\n");
-            return false;
-        }
-
-        // wire the graph: compute noise -> 3D texture, then raymarch -> color target
-        data->mNoisePass.mPipeline = &data->mNoisePipeline;
-        data->mNoisePass.mSet = &data->mNoiseSet;
-        data->mNoisePass.mPc = &data->mNoisePc;
-        data->mCloudPass.mPipeline = &data->mCloudPipeline;
-        data->mCloudPass.mSet = &data->mCloudSet;
-        data->mCloudPass.mColorTarget = &data->mColorTarget;
-        data->mCloudPass.mPc = &data->mCloudPc;
-        data->mCloudPass.mWidth = ctx.mSwapchain.GetWidth();
-        data->mCloudPass.mHeight = ctx.mSwapchain.GetHeight();
-
-        const auto noiseId = data->mGraph.RegisterImage(data->mNoiseTex);
-        const auto targetId = data->mGraph.RegisterImage(data->mColorTarget);
-
-        {
-            moe::rhi::PassDesc desc{};
-            desc.mName = "cloud-noise";
-            desc.mPass = &data->mNoisePass;
-            moe::rhi::ResourceAccess access{};
-            access.mResource = noiseId;
-            access.mIsWrite = true;
-            access.mStage = moe::rhi::PipelineStage::kComputeShader;
-            access.mAccess = moe::rhi::Access::kShaderWrite;
-            access.mLayout = moe::rhi::ImageLayout::kGeneral; // storage image
-            desc.mWrites.push_back(access);
-            if (!data->mGraph.AddPass(desc)) {
-                std::fprintf(stderr, "clouds: add noise pass failed\n");
-                return false;
-            }
-        }
-        {
-            moe::rhi::PassDesc desc{};
-            desc.mName = "cloud-raymarch";
-            desc.mPass = &data->mCloudPass;
-            moe::rhi::ResourceAccess access{};
-            access.mResource = noiseId;
-            access.mIsWrite = false;
-            access.mStage = moe::rhi::PipelineStage::kFragmentShader;
-            access.mAccess = moe::rhi::Access::kShaderRead;
-            access.mLayout = moe::rhi::ImageLayout::kShaderReadOnly;
-            desc.mReads.push_back(access);
-            access.mResource = targetId;
-            access.mIsWrite = true;
-            access.mStage = moe::rhi::PipelineStage::kColorAttachmentOutput;
-            access.mAccess = moe::rhi::Access::kColorAttachmentWrite;
-            access.mLayout = moe::rhi::ImageLayout::kColorAttachment;
-            desc.mWrites.push_back(access);
-            if (!data->mGraph.AddPass(desc)) {
-                std::fprintf(stderr, "clouds: add raymarch pass failed\n");
-                return false;
-            }
-        }
-        std::string graphError;
-        if (!data->mGraph.Compile(graphError)) {
-            std::fprintf(stderr, "clouds: graph compile: %s\n", graphError.c_str());
+        const moe::rhi::ShaderProgram* cloud = ctx.mAssets.GetProgram(data->mCloudProgram);
+        data->mPcCameraPos = data->mRenderer.GetPushConstant(*cloud, "cameraPos");
+        data->mPcForward = data->mRenderer.GetPushConstant(*cloud, "forward");
+        data->mPcRight = data->mRenderer.GetPushConstant(*cloud, "right");
+        data->mPcUp = data->mRenderer.GetPushConstant(*cloud, "up");
+        data->mPcSunDir = data->mRenderer.GetPushConstant(*cloud, "sunDir");
+        data->mPcTanHalfFov = data->mRenderer.GetPushConstant(*cloud, "tanHalfFov");
+        data->mPcAspect = data->mRenderer.GetPushConstant(*cloud, "aspect");
+        data->mPcTime = data->mRenderer.GetPushConstant(*cloud, "time");
+        data->mPcBoxMin = data->mRenderer.GetPushConstant(*cloud, "boxMin");
+        data->mPcBoxMax = data->mRenderer.GetPushConstant(*cloud, "boxMax");
+        if (data->mPcCameraPos < 0 || data->mPcForward < 0 || data->mPcRight < 0
+                || data->mPcUp < 0 || data->mPcSunDir < 0 || data->mPcTanHalfFov < 0
+                || data->mPcAspect < 0 || data->mPcTime < 0 || data->mPcBoxMin < 0
+                || data->mPcBoxMax < 0) {
+            std::fprintf(stderr, "clouds: push constant names mismatch\n");
             return false;
         }
 
@@ -259,12 +161,11 @@ namespace {
                 std::chrono::steady_clock::now() - start).count();
 
         // auto-orbit camera around the cloud box
-        static float angle = 0.0f;
-        angle += 0.0025f;
+        data->mAngle += 0.0025f;
         const float radius = 14.0f;
         const glm::vec3 target(0.0f, 2.0f, 0.0f);
         glm::vec3 cameraPos = target
-                + glm::vec3(std::cos(angle), 0.0f, std::sin(angle)) * radius;
+                + glm::vec3(std::cos(data->mAngle), 0.0f, std::sin(data->mAngle)) * radius;
         cameraPos.y = 8.0f; // fly above the cloud field
         const glm::vec3 forward = glm::normalize(target - cameraPos);
         const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
@@ -286,45 +187,72 @@ namespace {
         data->mCloudPc.mBoxMin = kBoxMin;
         data->mCloudPc.mBoxMax = kBoxMax;
 
-        // graph: compute noise (general) -> raymarch (color target, shader-read noise)
-        if (!data->mGraph.Execute(cmd)) {
-            std::fprintf(stderr, "clouds: graph execute failed\n");
+        const float clear[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        if (!data->mFrame.Acquire(ctx.mSwapchain)) {
             return;
         }
+        data->mRenderer.BeginFrame(cmd, data->mFrame, clear);
 
-        // copy the offscreen color target into the swapchain image (the
-        // Swapchain manages the image's layout on both ends)
-        moe::rhi::Image swapImage;
-        if (!ctx.mSwapchain.GetCurrentImage(swapImage)) {
-            return;
+        // compute the noise volume between passes (raw RHI is the escape
+        // hatch; engine barriers keep the layout bookkeeping honest)
+        {
+            moe::rhi::SyncInfo sync{};
+            sync.mSrcStage = data->mNoiseLayout == moe::rhi::ImageLayout::kUndefined
+                    ? moe::rhi::PipelineStage::kTopOfPipe
+                    : moe::rhi::PipelineStage::kFragmentShader;
+            sync.mSrcAccess = data->mNoiseLayout == moe::rhi::ImageLayout::kUndefined
+                    ? moe::rhi::Access::kNone
+                    : moe::rhi::Access::kShaderRead;
+            sync.mDstStage = moe::rhi::PipelineStage::kComputeShader;
+            sync.mDstAccess = moe::rhi::Access::kShaderWrite;
+            data->mRenderer.ImageBarrier(data->mNoiseTex, data->mNoiseLayout,
+                    moe::rhi::ImageLayout::kGeneral, sync);
+            data->mNoiseLayout = moe::rhi::ImageLayout::kGeneral;
+
+            cmd.BindDescriptorSet(data->mNoisePipeline, data->mNoiseSet, 0);
+            cmd.SetPushConstants(data->mNoisePipeline, 0, sizeof(NoisePushConstants),
+                    &data->mNoisePc);
+            cmd.Dispatch(data->mNoisePipeline, kNoiseSize / 4, kNoiseSize / 4, kNoiseSize / 4);
+
+            sync.mSrcStage = moe::rhi::PipelineStage::kComputeShader;
+            sync.mSrcAccess = moe::rhi::Access::kShaderWrite;
+            sync.mDstStage = moe::rhi::PipelineStage::kFragmentShader;
+            sync.mDstAccess = moe::rhi::Access::kShaderRead;
+            data->mRenderer.ImageBarrier(data->mNoiseTex, moe::rhi::ImageLayout::kGeneral,
+                    moe::rhi::ImageLayout::kShaderReadOnly, sync);
+            data->mNoiseLayout = moe::rhi::ImageLayout::kShaderReadOnly;
         }
 
-        moe::rhi::SyncInfo sync{};
-        // color target: color attachment -> transfer src
-        sync.mSrcStage = moe::rhi::PipelineStage::kColorAttachmentOutput;
-        sync.mSrcAccess = moe::rhi::Access::kColorAttachmentWrite;
-        sync.mDstStage = moe::rhi::PipelineStage::kTransfer;
-        sync.mDstAccess = moe::rhi::Access::kTransferRead;
-        cmd.ImageBarrier(data->mColorTarget, moe::rhi::ImageLayout::kColorAttachment,
-                moe::rhi::ImageLayout::kTransferSrc, sync);
-        if (!ctx.mSwapchain.BeginTransfer(cmd)) {
-            swapImage.Destroy();
-            return;
-        }
-        cmd.CopyImage(data->mColorTarget, moe::rhi::ImageLayout::kTransferSrc,
-                swapImage, moe::rhi::ImageLayout::kTransferDst);
-        ctx.mSwapchain.EndTransfer(cmd);
+        // raymarch straight into the swapchain
+        const moe::neo::PassDesc pass{"clouds", {}, {}};
+        data->mRenderer.Execute(pass, [&](moe::neo::PassContext& context) {
+            context.BindImage(0, data->mNoiseTex);
+            context.BindSampler(1, data->mSampler);
+            context.SetPushConstant(data->mPcCameraPos, &data->mCloudPc.mCameraPos,
+                    sizeof(glm::vec3));
+            context.SetPushConstant(data->mPcForward, &data->mCloudPc.mForward, sizeof(glm::vec3));
+            context.SetPushConstant(data->mPcRight, &data->mCloudPc.mRight, sizeof(glm::vec3));
+            context.SetPushConstant(data->mPcUp, &data->mCloudPc.mUp, sizeof(glm::vec3));
+            context.SetPushConstant(data->mPcSunDir, &data->mCloudPc.mSunDir, sizeof(glm::vec3));
+            context.SetPushConstant(data->mPcTanHalfFov, &data->mCloudPc.mTanHalfFov,
+                    sizeof(float));
+            context.SetPushConstant(data->mPcAspect, &data->mCloudPc.mAspect, sizeof(float));
+            context.SetPushConstant(data->mPcTime, &data->mCloudPc.mTime, sizeof(float));
+            context.SetPushConstant(data->mPcBoxMin, &data->mCloudPc.mBoxMin, sizeof(glm::vec3));
+            context.SetPushConstant(data->mPcBoxMax, &data->mCloudPc.mBoxMax, sizeof(glm::vec3));
+            context.DrawFullscreen(*ctx.mAssets.GetProgram(data->mCloudProgram));
+        });
 
-        swapImage.Destroy(); // borrowed wrapper: only drops the wrapper
+        data->mRenderer.EndFrame();
+        data->mFrame.Release();
     }
 
     void Shutdown(void* userdata, examples::AppContext&) {
         auto* data = static_cast<CloudsData*>(userdata);
         data->mNoiseSet.Destroy();
-        data->mCloudSet.Destroy();
         data->mSampler.Destroy();
         data->mNoiseTex.Destroy();
-        data->mColorTarget.Destroy();
+        data->mRenderer.Destroy();
     }
 }// namespace
 
@@ -337,9 +265,8 @@ int main() {
     callbacks.mUserdata = &data;
 
     examples::App app;
-    std::string error;
-    if (!app.Run("clouds demo", 1280, 720, callbacks, error)) {
-        std::fprintf(stderr, "clouds: app: %s\n", error.c_str());
+    if (!app.Run("clouds demo", 1280, 720, callbacks)) {
+        std::fprintf(stderr, "clouds: app: %s\n", moe::Error::Get().c_str());
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

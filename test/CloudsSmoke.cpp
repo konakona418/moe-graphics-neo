@@ -1,4 +1,8 @@
 #include <RHI/Buffer.hpp>
+
+#include <Core/Defer.hpp>
+#include "TestSupport.hpp"
+#include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
 #include <RHI/Device.hpp>
@@ -79,8 +83,7 @@ namespace {
 }// namespace
 
 int main() {
-    std::string error;
-
+    constexpr const char* kTestName = "Clouds smoke";
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -112,7 +115,6 @@ int main() {
     moe::rhi::SamplerCreateInfo samplerInfo{};
     moe::rhi::BufferCreateInfo readbackInfo{};
     moe::rhi::SyncInfo sync{};
-    std::string graphError;
     moe::rhi::ResourceId noiseId = moe::rhi::kInvalidResourceId;
     moe::rhi::ResourceId targetId = moe::rhi::kInvalidResourceId;
 
@@ -121,9 +123,20 @@ int main() {
     NoisePass noisePass;
     CloudPass cloudPass;
 
+
+    moe::Defer cleanup([&] {
+        commandList.Destroy();
+        readback.Destroy();
+        noiseSet.Destroy();
+        cloudSet.Destroy();
+        sampler.Destroy();
+        noiseTex.Destroy();
+        colorTarget.Destroy();
+        cache.Destroy();
+        device.Destroy();
+    });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     noiseInfo.mType = moe::rhi::ImageType::k3D;
@@ -134,8 +147,7 @@ int main() {
     noiseInfo.mUsage = moe::rhi::ImageUsage::kStorage | moe::rhi::ImageUsage::kSampled
             | moe::rhi::ImageUsage::kTransferSrc;
     if (!device.CreateImage(noiseInfo, noiseTex)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     targetInfo.mType = moe::rhi::ImageType::k2D;
@@ -145,31 +157,26 @@ int main() {
     targetInfo.mFormat = moe::rhi::Format::kR8G8B8A8Srgb;
     targetInfo.mUsage = moe::rhi::ImageUsage::kColorAttachment | moe::rhi::ImageUsage::kTransferSrc;
     if (!device.CreateImage(targetInfo, colorTarget)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!device.CreateSampler(samplerInfo, sampler)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!noiseComp.Load(MOE_SOURCE_DIR "/shaders/examples/clouds_noise.comp.spv", moe::rhi::ShaderStage::kCompute)
             || !vert.Load(MOE_SOURCE_DIR "/shaders/examples/clouds.vert.spv", moe::rhi::ShaderStage::kVertex)
             || !frag.Load(MOE_SOURCE_DIR "/shaders/examples/clouds.frag.spv", moe::rhi::ShaderStage::kFragment)) {
-        error = "shader load failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "shader load failed");
     }
     if (!noiseProgram.AddShader(noiseComp)
             || !cloudProgram.AddShader(vert) || !cloudProgram.AddShader(frag)) {
-        error = "program add failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "program add failed");
     }
 
     computeState.mProgram = &noiseProgram;
     if (!device.GetOrCreateComputePipeline(computeState, noisePipeline)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     graphicsState.mProgram = &cloudProgram;
     graphicsState.mTopology = moe::rhi::PrimitiveTopology::kTriangleList;
@@ -178,37 +185,31 @@ int main() {
     graphicsState.mColorFormats[0] = moe::rhi::Format::kR8G8B8A8Srgb;
     graphicsState.mBlendAttachmentCount = 1;
     if (!device.GetOrCreateGraphicsPipeline(graphicsState, cloudPipeline)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!noisePipeline.GetDescriptorSetLayout(0, noiseLayout)
             || !cloudPipeline.GetDescriptorSetLayout(0, cloudLayout)) {
-        error = "no descriptor set layout 0";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "no descriptor set layout 0");
     }
     if (!device.CreateDescriptorSet(noiseLayout, noiseSet)
             || !device.CreateDescriptorSet(cloudLayout, cloudSet)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!noiseSet.WriteImage(0, noiseTex, moe::rhi::DescriptorType::kStorageImage)
             || !cloudSet.WriteImage(0, noiseTex, moe::rhi::DescriptorType::kSampledImage)
             || !cloudSet.WriteSampler(1, sampler)) {
-        error = "descriptor write failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "descriptor write failed");
     }
 
     readbackInfo.mSize = sizeof(uint32_t) * kPixelCount;
     readbackInfo.mUsage = moe::rhi::BufferUsage::kTransferDst;
     readbackInfo.mCpuVisible = true;
     if (!device.CreateBuffer(readbackInfo, readback)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!device.CreateCommandList(commandList)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     noiseId = graph.RegisterImage(noiseTex);
@@ -225,8 +226,7 @@ int main() {
         access.mLayout = moe::rhi::ImageLayout::kGeneral;
         desc.mWrites.push_back(access);
         if (!graph.AddPass(desc)) {
-            error = "add noise pass failed";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "add noise pass failed");
         }
     }
     {
@@ -247,13 +247,11 @@ int main() {
         access.mLayout = moe::rhi::ImageLayout::kColorAttachment;
         desc.mWrites.push_back(access);
         if (!graph.AddPass(desc)) {
-            error = "add raymarch pass failed";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "add raymarch pass failed");
         }
     }
-    if (!graph.Compile(graphError)) {
-        error = "graph compile: " + graphError;
-        goto cleanup;
+    if (!graph.Compile()) {
+        return moe::test::Fail(kTestName, "graph compile failed");
     }
 
     noisePc.mSize = kNoiseSize;
@@ -296,8 +294,7 @@ int main() {
 
     commandList.Begin();
     if (!graph.Execute(commandList)) {
-        error = "graph execute failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "graph execute failed");
     }
     sync.mSrcStage = moe::rhi::PipelineStage::kColorAttachmentOutput;
     sync.mSrcAccess = moe::rhi::Access::kColorAttachmentWrite;
@@ -308,15 +305,13 @@ int main() {
     commandList.CopyImageToBuffer(colorTarget, readback);
     commandList.End();
     if (!device.Submit(commandList, true)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     {
         auto* data = static_cast<uint32_t*>(readback.Map());
         if (!data) {
-            error = "failed to map readback";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map readback");
         }
         uint32_t minV = 0xFFFFFFFFu;
         uint32_t maxV = 0u;
@@ -330,27 +325,11 @@ int main() {
         const uint64_t avg = sum / kPixelCount;
         std::printf("Clouds smoke: min=0x%08X max=0x%08X avg=0x%08lX\n", minV, maxV, (unsigned long) avg);
         if (maxV == 0u || minV == maxV) {
-            error = "raymarch produced a black or uniform frame";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "raymarch produced a black or uniform frame");
         }
     }
 
     std::printf("Clouds smoke passed.\n");
 
-cleanup:
-    commandList.Destroy();
-    readback.Destroy();
-    noiseSet.Destroy();
-    cloudSet.Destroy();
-    sampler.Destroy();
-    noiseTex.Destroy();
-    colorTarget.Destroy();
-    cache.Destroy();
-    device.Destroy();
-
-    if (!error.empty()) {
-        std::fprintf(stderr, "Clouds smoke FAILED: %s\n", error.c_str());
-        return EXIT_FAILURE;
-    }
     return EXIT_SUCCESS;
 }

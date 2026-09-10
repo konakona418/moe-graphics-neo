@@ -31,7 +31,7 @@ namespace moe::rhi {
 
         // Creates the pool/layout/set and registers the default samplers
         // (nearest @0, linear @1), like the old engine did.
-        bool Init(Device& device, std::string& error);
+        bool Init(Device& device);
 
         // Idempotent; the destructor aborts if initialized but not destroyed.
         void Destroy();

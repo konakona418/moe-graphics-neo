@@ -9,7 +9,7 @@ struct PushConstants {
 PushConstants pcs;
 
 [vk::binding(0, 0)]
-Texture2D baseColorTexture;
+Texture2D baseColor;
 [vk::binding(1, 0)]
 SamplerState baseColorSampler;
 
@@ -36,7 +36,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     float3 n = normalize(input.normal);
     float3 lightDir = normalize(float3(0.5, 0.8, 0.6));
     float ndl = max(dot(n, lightDir), 0.0);
-    float3 texColor = baseColorTexture.Sample(baseColorSampler, input.uv).rgb;
+    float3 texColor = baseColor.Sample(baseColorSampler, input.uv).rgb;
     float3 color = texColor * (0.2 + 0.8 * ndl);
     return float4(color, 1.0);
 }

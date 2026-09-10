@@ -51,10 +51,12 @@ namespace moe::rhi {
         // Begins dynamic rendering to the given color image, optionally with a
         // depth attachment. The images must already be in their attachment
         // layouts (caller or the RenderGraph issues the transitions). Load =
-        // clear with clearColor / depthClear, or load (keep contents).
+        // clear with clearColor / depthClear, or load (keep contents). A
+        // borrowed depth attachment (depthLoadOp = kLoad) is how a later pass
+        // depth-tests against an earlier pass's depth.
         void BeginRendering(const Image& color, const float clearColor[4],
                 const Image* depth = nullptr, float depthClear = 1.0f,
-                LoadOp colorLoadOp = LoadOp::kClear);
+                LoadOp colorLoadOp = LoadOp::kClear, LoadOp depthLoadOp = LoadOp::kClear);
         // Ends dynamic rendering; the image stays in ColorAttachment layout.
         void EndRendering();
 

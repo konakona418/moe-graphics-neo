@@ -8,6 +8,8 @@
 #include "RHI/PipelineCache.hpp"
 #include "RHI/Sampler.hpp"
 #include "RHI/Swapchain.hpp"
+#include "Core/Defer.hpp"
+#include "Core/Error.hpp"
 #include "Core/Logger.hpp"
 #include "Mappings.hpp"
 #include "RhiAssert.hpp"
@@ -65,22 +67,22 @@ namespace moe::rhi {
     Device::Device() = default;
 
     bool Device::Create(const DeviceCreateInfo& info, Device& outDevice) {
-        auto fail = [&](std::string message) {
-            Teardown(outDevice.mImpl.get());
-            outDevice.mImpl.reset();
-            outDevice.mLastError = std::move(message);
-            return false;
-        };
-
         if (info.mPipelineCache == nullptr) {
-            return fail("Device requires an injected PipelineCache (null cache is a fatal error)");
+            return Fail("Device requires an injected PipelineCache (null cache is a fatal error)");
         }
 
         outDevice.mImpl = std::make_unique<DeviceImpl>();
         auto* impl = outDevice.mImpl.get();
+        bool success = false;
+        Defer rollback{[&] {
+            if (!success) {
+                Teardown(outDevice.mImpl.get());
+                outDevice.mImpl.reset();
+            }
+        }};
 
         if (volkInitialize() != VK_SUCCESS) {
-            return fail("volkInitialize failed");
+            return Fail("volkInitialize failed");
         }
 
         vkb::InstanceBuilder instanceBuilder;
@@ -101,7 +103,7 @@ namespace moe::rhi {
         }
         auto instanceResult = instanceBuilder.build();
         if (!instanceResult) {
-            return fail("Failed to create Vulkan instance: " + instanceResult.error().message());
+            return Fail("Failed to create Vulkan instance: " + instanceResult.error().message());
         }
         auto vkbInstance = *instanceResult;
         impl->mInstance = std::move(vkbInstance);
@@ -147,7 +149,7 @@ namespace moe::rhi {
         }
         auto selectorResult = selector.select();
         if (!selectorResult) {
-            return fail("Failed to select a physical device: " + selectorResult.error().message());
+            return Fail("Failed to select a physical device: " + selectorResult.error().message());
         }
         auto vkbPhysicalDevice = *selectorResult;
         impl->mPhysicalDevice = vkbPhysicalDevice.physical_device;
@@ -156,7 +158,7 @@ namespace moe::rhi {
         vkb::DeviceBuilder deviceBuilder{vkbPhysicalDevice};
         auto deviceResult = deviceBuilder.build();
         if (!deviceResult) {
-            return fail("Failed to create logical device: " + deviceResult.error().message());
+            return Fail("Failed to create logical device: " + deviceResult.error().message());
         }
         auto vkbDevice = *deviceResult;
         impl->mDevice = vkbDevice.device;
@@ -164,7 +166,7 @@ namespace moe::rhi {
 
         auto queueResult = vkbDevice.get_queue(vkb::QueueType::graphics);
         if (!queueResult) {
-            return fail("Failed to get graphics queue: " + queueResult.error().message());
+            return Fail("Failed to get graphics queue: " + queueResult.error().message());
         }
         impl->mGraphicsQueue = *queueResult;
         auto queueIndexResult = vkbDevice.get_queue_index(vkb::QueueType::graphics);
@@ -174,7 +176,7 @@ namespace moe::rhi {
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         if (vkCreateCommandPool(impl->mDevice, &poolInfo, nullptr, &impl->mCommandPool) != VK_SUCCESS) {
-            return fail("Failed to create command pool");
+            return Fail("Failed to create command pool");
         }
 
         VmaAllocatorCreateInfo allocatorInfo{};
@@ -190,14 +192,15 @@ namespace moe::rhi {
         allocatorInfo.pVulkanFunctions = &vulkanFunctions;
 
         if (vmaCreateAllocator(&allocatorInfo, &impl->mAllocator) != VK_SUCCESS) {
-            return fail("Failed to create memory allocator");
+            return Fail("Failed to create memory allocator");
         }
 
         if (!info.mPipelineCache->Create(outDevice)) {
-            return fail("PipelineCache::Create failed");
+            return Fail("PipelineCache::Create failed");
         }
 
         outDevice.mPipelineCache = info.mPipelineCache;
+        success = true;
         return true;
     }
 
@@ -238,10 +241,9 @@ namespace moe::rhi {
         const VkResult result = vmaCreateBuffer(mImpl->mAllocator, &bufferInfo, &allocInfo,
                 &impl->mBuffer, &impl->mAllocation, nullptr);
         if (result != VK_SUCCESS) {
-            mLastError = "Failed to allocate buffer (" + std::to_string(info.mSize)
-                    + " bytes, VkResult " + std::to_string(static_cast<int>(result)) + ")";
             outBuffer.mImpl.reset();
-            return false;
+            return Fail("Failed to allocate buffer (" + std::to_string(info.mSize)
+                    + " bytes, VkResult " + std::to_string(static_cast<int>(result)) + ")");
         }
 
         VkBufferDeviceAddressInfo addressInfo{};
@@ -287,9 +289,8 @@ namespace moe::rhi {
         if (vmaCreateImage(mImpl->mAllocator, &imageInfo, &allocInfo,
                     &impl->mImage, &impl->mAllocation, nullptr)
                 != VK_SUCCESS) {
-            mLastError = "Failed to allocate image";
             outImage.mImpl.reset();
-            return false;
+            return Fail("Failed to allocate image");
         }
 
         VkImageViewCreateInfo viewInfo{};
@@ -307,10 +308,9 @@ namespace moe::rhi {
         viewInfo.subresourceRange.layerCount = layerCount;
 
         if (vkCreateImageView(mImpl->mDevice, &viewInfo, nullptr, &impl->mView) != VK_SUCCESS) {
-            mLastError = "Failed to create image view";
             vmaDestroyImage(mImpl->mAllocator, impl->mImage, impl->mAllocation);
             outImage.mImpl.reset();
-            return false;
+            return Fail("Failed to create image view");
         }
         return true;
     }
@@ -332,9 +332,8 @@ namespace moe::rhi {
         samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
 
         if (vkCreateSampler(mImpl->mDevice, &samplerInfo, nullptr, &impl->mSampler) != VK_SUCCESS) {
-            mLastError = "Failed to create sampler";
             outSampler.mImpl.reset();
-            return false;
+            return Fail("Failed to create sampler");
         }
         return true;
     }
@@ -350,9 +349,8 @@ namespace moe::rhi {
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = 1;
         if (vkAllocateCommandBuffers(mImpl->mDevice, &allocInfo, &impl->mCommandBuffer) != VK_SUCCESS) {
-            mLastError = "Failed to allocate command buffer";
             outCommandList.mImpl.reset();
-            return false;
+            return Fail("Failed to allocate command buffer");
         }
         return true;
     }
@@ -364,18 +362,18 @@ namespace moe::rhi {
         impl->mSurface = reinterpret_cast<VkSurfaceKHR>(surfaceHandle);
         impl->mWidth = width;
         impl->mHeight = height;
-
-        auto fail = [&](std::string message) {
-            mLastError = std::move(message);
-            outSwapchain.mImpl.reset();
-            return false;
-        };
+        bool success = false;
+        Defer rollback{[&] {
+            if (!success) {
+                outSwapchain.mImpl.reset();
+            }
+        }};
 
         VkBool32 presentSupported = VK_FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(mImpl->mPhysicalDevice, mImpl->mGraphicsQueueFamily,
                 impl->mSurface, &presentSupported);
         if (presentSupported != VK_TRUE) {
-            return fail("Surface does not support present on the graphics queue");
+            return Fail("Surface does not support present on the graphics queue");
         }
 
         uint32_t formatCount = 0;
@@ -383,7 +381,7 @@ namespace moe::rhi {
         std::vector<VkSurfaceFormatKHR> formats(formatCount);
         vkGetPhysicalDeviceSurfaceFormatsKHR(mImpl->mPhysicalDevice, impl->mSurface, &formatCount, formats.data());
         if (formats.empty()) {
-            return fail("No surface formats available");
+            return Fail("No surface formats available");
         }
         VkSurfaceFormatKHR chosen = formats[0];
         for (const auto& format : formats) {
@@ -434,7 +432,7 @@ namespace moe::rhi {
         createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
         createInfo.clipped = VK_TRUE;
         if (vkCreateSwapchainKHR(mImpl->mDevice, &createInfo, nullptr, &impl->mSwapchain) != VK_SUCCESS) {
-            return fail("Failed to create swapchain");
+            return Fail("Failed to create swapchain");
         }
 
         uint32_t swapImageCount = 0;
@@ -453,7 +451,7 @@ namespace moe::rhi {
             viewInfo.subresourceRange.levelCount = 1;
             viewInfo.subresourceRange.layerCount = 1;
             if (vkCreateImageView(mImpl->mDevice, &viewInfo, nullptr, &impl->mImageViews[i]) != VK_SUCCESS) {
-                return fail("Failed to create swapchain image view");
+                return Fail("Failed to create swapchain image view");
             }
         }
 
@@ -464,21 +462,21 @@ namespace moe::rhi {
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // first AcquireImage must not block
         if (vkCreateSemaphore(mImpl->mDevice, &semaphoreInfo, nullptr, &impl->mImageAvailable) != VK_SUCCESS
                 || vkCreateFence(mImpl->mDevice, &fenceInfo, nullptr, &impl->mInFlight) != VK_SUCCESS) {
-            return fail("Failed to create swapchain sync objects");
+            return Fail("Failed to create swapchain sync objects");
         }
         impl->mRenderFinished.resize(swapImageCount);
         for (auto& semaphore : impl->mRenderFinished) {
             if (vkCreateSemaphore(mImpl->mDevice, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS) {
-                return fail("Failed to create swapchain render-finished semaphores");
+                return Fail("Failed to create swapchain render-finished semaphores");
             }
         }
+        success = true;
         return true;
     }
 
     bool Device::CreateDescriptorSet(const DescriptorSetLayout& layout, DescriptorSet& outSet) {
         if (!layout.mImpl || layout.mImpl->mSetLayout == VK_NULL_HANDLE) {
-            mLastError = "Invalid descriptor set layout";
-            return false;
+            return Fail("Invalid descriptor set layout");
         }
 
         std::vector<VkDescriptorPoolSize> poolSizes;
@@ -505,9 +503,8 @@ namespace moe::rhi {
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
         if (vkCreateDescriptorPool(mImpl->mDevice, &poolInfo, nullptr, &outSet.mImpl->mPool) != VK_SUCCESS) {
-            mLastError = "Failed to create descriptor pool";
             outSet.mImpl.reset();
-            return false;
+            return Fail("Failed to create descriptor pool");
         }
 
         VkDescriptorSetAllocateInfo setInfo{};
@@ -516,27 +513,24 @@ namespace moe::rhi {
         setInfo.descriptorSetCount = 1;
         setInfo.pSetLayouts = &layout.mImpl->mSetLayout;
         if (vkAllocateDescriptorSets(mImpl->mDevice, &setInfo, &outSet.mImpl->mSet) != VK_SUCCESS) {
-            mLastError = "Failed to allocate descriptor set";
             outSet.mImpl.reset();
-            return false;
+            return Fail("Failed to allocate descriptor set");
         }
         return true;
     }
 
     bool Device::GetOrCreateGraphicsPipeline(const GraphicsPipelineState& state, GraphicsPipeline& out) {
-        const bool ok = mPipelineCache->GetOrCreateGraphics(state, out);
-        if (!ok) {
-            mLastError = "PipelineCache::GetOrCreateGraphics failed";
+        if (!mPipelineCache->GetOrCreateGraphics(state, out)) {
+            return Fail("PipelineCache::GetOrCreateGraphics failed");
         }
-        return ok;
+        return true;
     }
 
     bool Device::GetOrCreateComputePipeline(const ComputePipelineState& state, ComputePipeline& out) {
-        const bool ok = mPipelineCache->GetOrCreateCompute(state, out);
-        if (!ok) {
-            mLastError = "PipelineCache::GetOrCreateCompute failed";
+        if (!mPipelineCache->GetOrCreateCompute(state, out)) {
+            return Fail("PipelineCache::GetOrCreateCompute failed");
         }
-        return ok;
+        return true;
     }
 
     bool Device::Submit(const CommandList& commandList, bool waitForCompletion) {
@@ -550,31 +544,26 @@ namespace moe::rhi {
             fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
             VkFence fence;
             if (vkCreateFence(mImpl->mDevice, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
-                mLastError = "Failed to create fence";
-                return false;
+                return Fail("Failed to create fence");
             }
             if (vkQueueSubmit(mImpl->mGraphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
-                mLastError = "Failed to submit command buffer";
                 vkDestroyFence(mImpl->mDevice, fence, nullptr);
-                return false;
+                return Fail("Failed to submit command buffer");
             }
             if (vkWaitForFences(mImpl->mDevice, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-                mLastError = "Failed to wait for fence";
                 vkDestroyFence(mImpl->mDevice, fence, nullptr);
-                return false;
+                return Fail("Failed to wait for fence");
             }
             vkDestroyFence(mImpl->mDevice, fence, nullptr);
         } else if (vkQueueSubmit(mImpl->mGraphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
-            mLastError = "Failed to submit command buffer";
-            return false;
+            return Fail("Failed to submit command buffer");
         }
         return true;
     }
 
     bool Device::WaitIdle() {
         if (vkDeviceWaitIdle(mImpl->mDevice) != VK_SUCCESS) {
-            mLastError = "Failed to wait for device idle";
-            return false;
+            return Fail("Failed to wait for device idle");
         }
         mImpl->FlushDeferredDeletions();
         return true;
@@ -598,9 +587,5 @@ namespace moe::rhi {
         outHandles.mGraphicsQueue = reinterpret_cast<uintptr_t>(mImpl->mGraphicsQueue);
         outHandles.mGraphicsQueueFamily = mImpl->mGraphicsQueueFamily;
         return true;
-    }
-
-    const std::string& Device::GetLastError() const {
-        return mLastError;
     }
 }// namespace moe::rhi

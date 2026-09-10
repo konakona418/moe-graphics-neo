@@ -1,5 +1,6 @@
 #include "UI/DebugUI.hpp"
 
+#include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/Device.hpp>
 #include <RHI/Swapchain.hpp>
@@ -59,22 +60,20 @@ namespace moe::ui {
     }
 
     bool DebugUI::Init(moe::rhi::Device& device, moe::rhi::Swapchain& swapchain,
-            uintptr_t glfwWindow, std::string& error) {
+            uintptr_t glfwWindow) {
         mImpl = std::make_unique<DebugUIImpl>();
 
         moe::rhi::RhiVulkanHandles handles;
         if (!device.GetVulkanHandles(handles)) {
-            error = "GetVulkanHandles failed";
             mImpl.reset();
-            return false;
+            return moe::Fail("GetVulkanHandles failed");
         }
         mImpl->mDevice = reinterpret_cast<VkDevice>(handles.mDevice);
 
         const VkFormat colorFormat = ToVkSwapchainFormat(swapchain.GetFormat());
         if (colorFormat == VK_FORMAT_UNDEFINED) {
-            error = "unsupported swapchain format for ImGui";
             mImpl.reset();
-            return false;
+            return moe::Fail("unsupported swapchain format for ImGui");
         }
 
         // Descriptor pool for ImGui (same spec as the old engine's initImGUI).
@@ -98,9 +97,8 @@ namespace moe::ui {
         poolInfo.poolSizeCount = static_cast<uint32_t>(std::size(poolSizes));
         poolInfo.pPoolSizes = poolSizes;
         if (vkCreateDescriptorPool(mImpl->mDevice, &poolInfo, nullptr, &mImpl->mPool) != VK_SUCCESS) {
-            error = "vkCreateDescriptorPool failed";
             mImpl.reset();
-            return false;
+            return moe::Fail("vkCreateDescriptorPool failed");
         }
 
         IMGUI_CHECKVERSION();
@@ -110,10 +108,9 @@ namespace moe::ui {
         ImGui::StyleColorsDark();
 
         if (!ImGui_ImplGlfw_InitForVulkan(reinterpret_cast<GLFWwindow*>(glfwWindow), true)) {
-            error = "ImGui_ImplGlfw_InitForVulkan failed";
             ImGui::DestroyContext(mImpl->mContext);
             mImpl.reset();
-            return false;
+            return moe::Fail("ImGui_ImplGlfw_InitForVulkan failed");
         }
 
         ImGui_ImplVulkan_InitInfo initInfo{};
@@ -131,12 +128,11 @@ namespace moe::ui {
         initInfo.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
         initInfo.PipelineRenderingCreateInfo.pColorAttachmentFormats = &colorFormat;
         if (!ImGui_ImplVulkan_Init(&initInfo)) {
-            error = "ImGui_ImplVulkan_Init failed";
             ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext(mImpl->mContext);
             vkDestroyDescriptorPool(mImpl->mDevice, mImpl->mPool, nullptr);
             mImpl.reset();
-            return false;
+            return moe::Fail("ImGui_ImplVulkan_Init failed");
         }
         mImpl->mBackendsReady = true;
         return true;

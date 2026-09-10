@@ -1,4 +1,6 @@
 // Audio engine smoke test: init the command-queue engine, create sources,
+
+#include <Core/Error.hpp>
 // load real Ogg Vorbis data (static + streamed), play/pause/stop, then tear
 // everything down. No audible verification; the point is the queue machinery,
 // decode paths, AL lifecycle and teardown staying crash-free. Skips gracefully
@@ -16,17 +18,15 @@
 
 int main() {
     std::vector<uint8_t> ogg;
-    std::string readError;
-    if (!moe::ReadFileBytes(MOE_SOURCE_DIR "/test/assets/tone.ogg", ogg, readError)) {
-        std::fprintf(stderr, "[audio-smoke] FAILED: %s\n", readError.c_str());
+    if (!moe::ReadFileBytes(MOE_SOURCE_DIR "/test/assets/tone.ogg", ogg)) {
+        std::fprintf(stderr, "[audio-smoke] FAILED: %s\n", moe::Error::Get().c_str());
         return 1;
     }
 
     moe::neo::Audio audio;
 
-    std::string error;
-    if (!audio.Init(error)) {
-        std::printf("[audio-smoke] no OpenAL device, skipping: %s\n", error.c_str());
+    if (!audio.Init()) {
+        std::printf("[audio-smoke] no OpenAL device, skipping: %s\n", moe::Error::Get().c_str());
         return 0;
     }
     std::printf("[audio-smoke] engine initialized\n");

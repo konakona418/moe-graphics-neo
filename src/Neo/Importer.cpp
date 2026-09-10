@@ -1,5 +1,6 @@
 #include "Neo/Importer.hpp"
 
+#include <Core/Error.hpp>
 #include <Neo/TextureLoader.hpp>
 
 #include <fastgltf/core.hpp>
@@ -81,9 +82,8 @@ namespace moe::neo {
 
         template<typename T>
         bool ReadAccessor(const fastgltf::Asset& asset, std::size_t accessorIndex,
-                std::vector<T>& out, std::string& error) {
+                std::vector<T>& out) {
             if (accessorIndex >= asset.accessors.size()) {
-                error = "glTF: accessor index out of range";
                 return false;
             }
             const fastgltf::Accessor& accessor = asset.accessors[accessorIndex];
@@ -95,17 +95,15 @@ namespace moe::neo {
         }
     }// namespace
 
-    bool ImportGltf(const char* path, Scene& outScene, std::string& outError) {
+    bool ImportGltf(const char* path, Scene& outScene) {
         fastgltf::Parser parser;
         auto data = fastgltf::GltfDataBuffer::FromPath(path);
         if (data.error() != fastgltf::Error::None) {
-            outError = "glTF: failed to read file";
-            return false;
+            return moe::Fail("glTF: failed to read file");
         }
         auto result = parser.loadGltf(data.get(), std::filesystem::path(path).parent_path(), kOptions);
         if (result.error() != fastgltf::Error::None) {
-            outError = "glTF: parse failed";
-            return false;
+            return moe::Fail("glTF: parse failed");
         }
         fastgltf::Asset asset = std::move(result.get());
 
@@ -157,11 +155,10 @@ namespace moe::neo {
             for (std::size_t p = 0; p < mesh.primitives.size(); ++p) {
                 const fastgltf::Primitive& prim = mesh.primitives[p];
                 MeshPrimitive& outPrim = outMesh.mPrimitives[p];
-                std::string ignored;
 
                 const auto* pos = prim.findAttribute("POSITION");
                 if (pos != nullptr) {
-                    ReadAccessor<glm::vec3>(asset, pos->accessorIndex, outPrim.mPositions, ignored);
+                    ReadAccessor<glm::vec3>(asset, pos->accessorIndex, outPrim.mPositions);
                     for (const glm::vec3& v : outPrim.mPositions) {
                         outPrim.mMin = glm::min(outPrim.mMin, v);
                         outPrim.mMax = glm::max(outPrim.mMax, v);
@@ -169,26 +166,26 @@ namespace moe::neo {
                 }
                 const auto* nrm = prim.findAttribute("NORMAL");
                 if (nrm != nullptr) {
-                    ReadAccessor<glm::vec3>(asset, nrm->accessorIndex, outPrim.mNormals, ignored);
+                    ReadAccessor<glm::vec3>(asset, nrm->accessorIndex, outPrim.mNormals);
                 }
                 const auto* uv = prim.findAttribute("TEXCOORD_0");
                 if (uv != nullptr) {
-                    ReadAccessor<glm::vec2>(asset, uv->accessorIndex, outPrim.mUv0, ignored);
+                    ReadAccessor<glm::vec2>(asset, uv->accessorIndex, outPrim.mUv0);
                 }
                 const auto* tan = prim.findAttribute("TANGENT");
                 if (tan != nullptr) {
-                    ReadAccessor<glm::vec4>(asset, tan->accessorIndex, outPrim.mTangents, ignored);
+                    ReadAccessor<glm::vec4>(asset, tan->accessorIndex, outPrim.mTangents);
                 }
                 const auto* joints = prim.findAttribute("JOINTS_0");
                 if (joints != nullptr) {
-                    ReadAccessor<glm::uvec4>(asset, joints->accessorIndex, outPrim.mJointIndices, ignored);
+                    ReadAccessor<glm::uvec4>(asset, joints->accessorIndex, outPrim.mJointIndices);
                 }
                 const auto* weights = prim.findAttribute("WEIGHTS_0");
                 if (weights != nullptr) {
-                    ReadAccessor<glm::vec4>(asset, weights->accessorIndex, outPrim.mJointWeights, ignored);
+                    ReadAccessor<glm::vec4>(asset, weights->accessorIndex, outPrim.mJointWeights);
                 }
                 if (prim.indicesAccessor.has_value()) {
-                    ReadAccessor<uint32_t>(asset, *prim.indicesAccessor, outPrim.mIndices, ignored);
+                    ReadAccessor<uint32_t>(asset, *prim.indicesAccessor, outPrim.mIndices);
                 }
                 outPrim.mMaterialIndex = prim.materialIndex.has_value()
                         ? static_cast<int32_t>(*prim.materialIndex) : -1;
@@ -263,8 +260,7 @@ namespace moe::neo {
                 out.mJointNodes.push_back(static_cast<uint32_t>(joint));
             }
             if (skin.inverseBindMatrices.has_value()) {
-                std::string ignored;
-                ReadAccessor<glm::mat4>(asset, *skin.inverseBindMatrices, out.mInverseBindMatrices, ignored);
+                ReadAccessor<glm::mat4>(asset, *skin.inverseBindMatrices, out.mInverseBindMatrices);
             }
         }
         // mark skinned meshes (a node with a skin + a mesh skins that mesh)
@@ -286,9 +282,8 @@ namespace moe::neo {
             for (std::size_t s = 0; s < anim.samplers.size(); ++s) {
                 const fastgltf::AnimationSampler& sampler = anim.samplers[s];
                 AnimationSampler& outSampler = out.mSamplers[s];
-                std::string ignored;
-                ReadAccessor<float>(asset, sampler.inputAccessor, outSampler.mInput, ignored);
-                ReadAccessor<glm::vec4>(asset, sampler.outputAccessor, outSampler.mOutput, ignored);
+                ReadAccessor<float>(asset, sampler.inputAccessor, outSampler.mInput);
+                ReadAccessor<glm::vec4>(asset, sampler.outputAccessor, outSampler.mOutput);
                 switch (sampler.interpolation) {
                     case fastgltf::AnimationInterpolation::Step: outSampler.mInterpolation = AnimationSampler::Interpolation::kStep; break;
                     case fastgltf::AnimationInterpolation::CubicSpline: outSampler.mInterpolation = AnimationSampler::Interpolation::kCubicSpline; break;

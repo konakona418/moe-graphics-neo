@@ -1,4 +1,8 @@
 #include <RHI/Buffer.hpp>
+
+#include <Core/Defer.hpp>
+#include "TestSupport.hpp"
+#include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/Device.hpp>
 #include <RHI/Image.hpp>
@@ -10,8 +14,7 @@
 #include <string>
 
 int main() {
-    std::string error;
-
+    constexpr const char* kTestName = "Upload smoke";
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -32,9 +35,17 @@ int main() {
     moe::rhi::SyncInfo transferIn{};
     moe::rhi::SyncInfo transferOut{};
 
+
+    moe::Defer cleanup([&] {
+        commandList.Destroy();
+        readback.Destroy();
+        staging.Destroy();
+        image.Destroy();
+        cache.Destroy();
+        device.Destroy();
+    });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     imageInfo.mType = moe::rhi::ImageType::k2D;
@@ -44,24 +55,21 @@ int main() {
     imageInfo.mFormat = moe::rhi::Format::kR32Uint;
     imageInfo.mUsage = moe::rhi::ImageUsage::kTransferDst | moe::rhi::ImageUsage::kTransferSrc;
     if (!device.CreateImage(imageInfo, image)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     stagingInfo.mSize = sizeof(uint32_t) * kPixelCount;
     stagingInfo.mUsage = moe::rhi::BufferUsage::kTransferSrc;
     stagingInfo.mCpuVisible = true;
     if (!device.CreateBuffer(stagingInfo, staging)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     readbackInfo.mSize = sizeof(uint32_t) * kPixelCount;
     readbackInfo.mUsage = moe::rhi::BufferUsage::kTransferDst;
     readbackInfo.mCpuVisible = true;
     if (!device.CreateBuffer(readbackInfo, readback)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     // initial transition: Undefined -> TransferDst (discard old contents)
@@ -78,8 +86,7 @@ int main() {
     {
         auto* data = static_cast<uint32_t*>(staging.Map());
         if (!data) {
-            error = "failed to map staging buffer";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map staging buffer");
         }
         for (uint32_t i = 0; i < kPixelCount; ++i) {
             data[i] = i + 100u; // distinguishable from the verify pattern
@@ -88,8 +95,7 @@ int main() {
     }
 
     if (!device.CreateCommandList(commandList)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     commandList.Begin();
@@ -101,22 +107,20 @@ int main() {
     commandList.CopyImageToBuffer(image, readback);
     commandList.End();
     if (!device.Submit(commandList, true)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     {
         auto* data = static_cast<uint32_t*>(readback.Map());
         if (!data) {
-            error = "failed to map readback buffer";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map readback buffer");
         }
         for (uint32_t i = 0; i < kPixelCount; ++i) {
             if (data[i] != i + 100u) {
                 std::fprintf(stderr, "Upload smoke FAILED: data[%u] = %u, expected %u\n",
                         i, data[i], i + 100u);
                 readback.Unmap();
-                goto cleanup;
+                return moe::test::Fail(kTestName);
             }
         }
         readback.Unmap();
@@ -124,17 +128,5 @@ int main() {
 
     std::printf("Upload smoke passed.\n");
 
-cleanup:
-    commandList.Destroy();
-    readback.Destroy();
-    staging.Destroy();
-    image.Destroy();
-    cache.Destroy();
-    device.Destroy();
-
-    if (!error.empty()) {
-        std::fprintf(stderr, "Upload smoke FAILED: %s\n", error.c_str());
-        return EXIT_FAILURE;
-    }
     return EXIT_SUCCESS;
 }

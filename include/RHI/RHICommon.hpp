@@ -259,6 +259,7 @@ namespace moe::rhi {
         uint32_t mBinding{0};
         DescriptorType mType{DescriptorType::kStorageBuffer};
         uint32_t mCount{1};
+        std::string mName; // SPIR-V binding name (name-addressed binding)
     };
 
     struct PushConstantRange {

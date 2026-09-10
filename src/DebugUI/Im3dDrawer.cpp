@@ -1,5 +1,6 @@
 #include "UI/Im3dDrawer.hpp"
 
+#include <Core/Error.hpp>
 #include <RHI/Buffer.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/Device.hpp>
@@ -77,7 +78,7 @@ namespace moe::ui {
     }
 
     bool Im3dDrawer::Init(moe::rhi::Device& device, moe::rhi::DefaultPipelineCache& cache,
-            moe::rhi::Swapchain& swapchain, std::string& error) {
+            moe::rhi::Swapchain& swapchain) {
         mImpl = std::make_unique<Im3dDrawerImpl>();
 
         struct ShaderPaths {
@@ -103,22 +104,19 @@ namespace moe::ui {
             moe::rhi::Shader frag;
             if (!vert.Load(paths[i].mVert, moe::rhi::ShaderStage::kVertex)
                     || !frag.Load(paths[i].mFrag, moe::rhi::ShaderStage::kFragment)) {
-                error = "Im3d shader load failed";
                 mImpl.reset();
-                return false;
+                return moe::Fail("Im3d shader load failed: " + moe::Error::Get());
             }
             if (paths[i].mGeom != nullptr
                     && !geom.Load(paths[i].mGeom, moe::rhi::ShaderStage::kGeometry)) {
-                error = "Im3d geometry shader load failed";
                 mImpl.reset();
-                return false;
+                return moe::Fail("Im3d geometry shader load failed: " + moe::Error::Get());
             }
             if (!outPipelines[i]->mProgram.AddShader(vert)
                     || (paths[i].mGeom != nullptr && !outPipelines[i]->mProgram.AddShader(geom))
                     || !outPipelines[i]->mProgram.AddShader(frag)) {
-                error = "Im3d program add failed";
                 mImpl.reset();
-                return false;
+                return moe::Fail("Im3d program add failed");
             }
 
             moe::rhi::GraphicsPipelineState state{};
@@ -141,9 +139,8 @@ namespace moe::ui {
             state.mColorFormatCount = 1;
             state.mColorFormats[0] = swapchain.GetFormat();
             if (!device.GetOrCreateGraphicsPipeline(state, outPipelines[i]->mPipeline)) {
-                error = "Im3d pipeline: " + device.GetLastError();
                 mImpl.reset();
-                return false;
+                return moe::Fail("Im3d pipeline: " + moe::Error::Get());
             }
         }
 
@@ -151,16 +148,14 @@ namespace moe::ui {
         bufferInfo.mSize = sizeof(Im3d::VertexData) * kMaxVertexCount;
         bufferInfo.mUsage = moe::rhi::BufferUsage::kVertex | moe::rhi::BufferUsage::kTransferDst;
         if (!device.CreateBuffer(bufferInfo, mImpl->mVertexBuffer)) {
-            error = "Im3d vertex buffer: " + device.GetLastError();
             mImpl.reset();
-            return false;
+            return moe::Fail("Im3d vertex buffer: " + moe::Error::Get());
         }
         bufferInfo.mUsage = moe::rhi::BufferUsage::kTransferSrc;
         bufferInfo.mCpuVisible = true;
         if (!device.CreateBuffer(bufferInfo, mImpl->mStaging)) {
-            error = "Im3d staging buffer: " + device.GetLastError();
             mImpl.reset();
-            return false;
+            return moe::Fail("Im3d staging buffer: " + moe::Error::Get());
         }
 
         mImpl->mActive = true;

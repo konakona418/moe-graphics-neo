@@ -27,8 +27,6 @@
     } while (false)
 
 int main() {
-    std::string error;
-
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -48,13 +46,13 @@ int main() {
         texture.mData[i + 3] = 0xFF; // A
     }
     moe::neo::Uploader uploader;
-    CHECK(uploader.Init(device, error));
+    CHECK(uploader.Init(device));
     moe::neo::UploadedTexture gpu;
-    CHECK(uploader.UploadTexture(texture, gpu, error));
+    CHECK(uploader.UploadTexture(texture, gpu));
 
     // ---- bindless set + register the image at index 0 ----
     moe::rhi::BindlessSet bindless;
-    CHECK(bindless.Init(device, error));
+    CHECK(bindless.Init(device));
     CHECK(bindless.IsValid());
     CHECK(bindless.GetImageCapacity() == moe::rhi::BindlessSet::kMaxImages);
     CHECK(bindless.AddImage(0, gpu.mImage));

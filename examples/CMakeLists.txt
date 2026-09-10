@@ -107,3 +107,19 @@ target_compile_definitions(moe-example-snow PRIVATE
 if(TARGET moe-shaders)
     add_dependencies(moe-example-snow moe-shaders)
 endif()
+
+add_executable(moe-example-toon
+  toon/main.cpp
+)
+
+target_link_libraries(moe-example-toon PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-toon PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-toon moe-shaders)
+endif()

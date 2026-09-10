@@ -28,7 +28,6 @@ namespace moe::rhi {
         std::vector<char> mCode; // .spv bytes
         ShaderReflection mReflection;
         uint64_t mContentHash{0};
-        std::string mLastError;
     };
 
     struct ShaderProgramImpl {

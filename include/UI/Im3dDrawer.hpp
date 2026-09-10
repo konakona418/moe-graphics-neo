@@ -45,7 +45,7 @@ namespace moe::ui {
         // vertex/staging buffers. Pipelines are owned by the cache; the cache
         // must outlive the drawer.
         bool Init(moe::rhi::Device& device, moe::rhi::DefaultPipelineCache& cache,
-                moe::rhi::Swapchain& swapchain, std::string& error);
+                moe::rhi::Swapchain& swapchain);
 
         bool IsActive() const;
 

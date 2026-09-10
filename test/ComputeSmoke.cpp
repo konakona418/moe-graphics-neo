@@ -1,3 +1,8 @@
+#include <Core/Error.hpp>
+
+#include <Core/Defer.hpp>
+#include "TestSupport.hpp"
+
 #include <RHI/Buffer.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
@@ -12,10 +17,7 @@
 #include <string>
 
 int main() {
-    // All declarations at the top so every goto to cleanup below crosses no
-    // non-trivial initialization.
-    std::string error;
-
+    constexpr const char* kTestName = "Compute smoke";
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -43,57 +45,56 @@ int main() {
     computeToTransfer.mDstAccess = moe::rhi::Access::kTransferRead;
 
     deviceInfo.mPipelineCache = &cache;
+
+    moe::Defer cleanup([&] {
+        commandList.Destroy();
+        descriptorSet.Destroy();
+        readback.Destroy();
+        storage.Destroy();
+        cache.Destroy();
+        device.Destroy();
+    });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!shader.Load(MOE_SOURCE_DIR "/shaders/rhi/sample.comp.spv", moe::rhi::ShaderStage::kCompute)) {
-        error = shader.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!program.AddShader(shader)) {
-        error = "failed to add shader to program";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "failed to add shader to program");
     }
 
     storageInfo.mSize = sizeof(uint32_t) * kElementCount;
     storageInfo.mUsage = moe::rhi::BufferUsage::kStorage | moe::rhi::BufferUsage::kTransferSrc;
     if (!device.CreateBuffer(storageInfo, storage)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     readbackInfo.mSize = sizeof(uint32_t) * kElementCount;
     readbackInfo.mUsage = moe::rhi::BufferUsage::kTransferDst;
     readbackInfo.mCpuVisible = true;
     if (!device.CreateBuffer(readbackInfo, readback)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     pipelineState.mProgram = &program;
     if (!device.GetOrCreateComputePipeline(pipelineState, pipeline)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!pipeline.GetDescriptorSetLayout(0, layout)) {
-        error = "no descriptor set layout 0";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "no descriptor set layout 0");
     }
     if (!device.CreateDescriptorSet(layout, descriptorSet)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!descriptorSet.WriteBuffer(0, storage)) {
-        error = "failed to write descriptor";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "failed to write descriptor");
     }
 
     if (!device.CreateCommandList(commandList)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     // Several iterations shake out sync races (compute write -> buffer barrier
@@ -106,21 +107,20 @@ int main() {
         commandList.CopyBuffer(storage, readback, storage.GetSize());
         commandList.End();
         if (!device.Submit(commandList, true)) {
-            error = device.GetLastError();
-            goto cleanup;
+            return moe::test::Fail(kTestName);
         }
 
         auto* data = static_cast<uint32_t*>(readback.Map());
         if (!data) {
-            error = "failed to map readback buffer";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map readback buffer");
         }
         for (uint32_t i = 0; i < kElementCount; ++i) {
             if (data[i] != i * 2u + 1u) {
-                std::fprintf(stderr, "Compute smoke FAILED (iter %u): data[%u] = %u, expected %u\n",
-                        iteration, i, data[i], i * 2u + 1u);
+                char message[128];
+                std::snprintf(message, sizeof(message),
+                        "data[%u] = %u, expected %u (iter %u)", i, data[i], i * 2u + 1u, iteration);
                 readback.Unmap();
-                goto cleanup;
+                return moe::test::Fail(kTestName, message);
             }
         }
         readback.Unmap();
@@ -128,17 +128,5 @@ int main() {
 
     std::printf("Compute smoke passed.\n");
 
-cleanup:
-    commandList.Destroy();
-    descriptorSet.Destroy();
-    readback.Destroy();
-    storage.Destroy();
-    cache.Destroy();
-    device.Destroy();
-
-    if (!error.empty()) {
-        std::fprintf(stderr, "Compute smoke FAILED: %s\n", error.c_str());
-        return EXIT_FAILURE;
-    }
     return EXIT_SUCCESS;
 }

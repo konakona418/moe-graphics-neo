@@ -1,5 +1,6 @@
 #include "examples/common/App.hpp"
 
+#include <Core/Error.hpp>
 #include <Core/Defer.hpp>
 #include <Core/Logger.hpp>
 #include <RHI/Image.hpp>
@@ -14,27 +15,25 @@ namespace examples {
     App::~App() = default;
 
     bool App::Run(const char* title, uint32_t width, uint32_t height,
-            const AppCallbacks& callbacks, std::string& error) {
+            const AppCallbacks& callbacks) {
         moe::rhi::DeviceCreateInfo deviceInfo{};
         deviceInfo.mApplicationName = "moe-example";
         deviceInfo.mEnableValidation = true;
         deviceInfo.mEnablePresent = true;
         deviceInfo.mPipelineCache = &mPipelineCache;
         if (!moe::rhi::Device::Create(deviceInfo, mDevice)) {
-            error = mDevice.GetLastError();
             return false;
         }
         // reverse-declaration order = correct teardown order (cache, then device)
         moe::Defer deviceCleanup([&] { mDevice.Destroy(); });
         moe::Defer cacheCleanup([&] { mPipelineCache.Destroy(); });
 
-        if (!mWindow.Create(mDevice, width, height, title, error)) {
+        if (!mWindow.Create(mDevice, width, height, title)) {
             return false;
         }
         moe::Defer windowCleanup([&] { mWindow.Destroy(); });
 
         if (!mDevice.CreateSwapchain(mWindow.GetSurfaceHandle(), width, height, mSwapchain)) {
-            error = mDevice.GetLastError();
             return false;
         }
         moe::Defer swapchainCleanup([&] { mSwapchain.Destroy(); });
@@ -42,44 +41,49 @@ namespace examples {
                 mSwapchain.GetWidth(), mSwapchain.GetHeight());
 
         if (!mDevice.CreateCommandList(mCommandList)) {
-            error = mDevice.GetLastError();
             return false;
         }
         moe::Defer commandListCleanup([&] { mCommandList.Destroy(); });
 
+        // assets must be destroyed before the device (RHI leak traps)
+        moe::Defer assetsCleanup([&] { mAssets.Destroy(); });
+        if (!mAssets.Init(mDevice)) {
+            return false;
+        }
+
         // Input first: its GLFW callbacks are chained by whoever registers
         // later (ImGui chains the previous callbacks).
         moe::Defer inputCleanup([&] { mInput.Destroy(); });
-        if (!mInput.Init(mWindow, error)) {
-            std::fprintf(stderr, "[app] Input init failed: %s\n", error.c_str());
-            error.clear();
+        if (!mInput.Init(mWindow)) {
+            std::fprintf(stderr, "[app] Input init failed: %s\n", moe::Error::Get().c_str());
+            moe::Error::Clear();
         }
 
         // UI cleanup must run before the device teardown; Destroy is idempotent
         // so it is safe even when Init failed.
         moe::Defer uiCleanup([&] { mDebugUI.Destroy(); });
-        if (!mDebugUI.Init(mDevice, mSwapchain, mWindow.GetHandle(), error)) {
-            std::fprintf(stderr, "[app] DebugUI init failed: %s\n", error.c_str());
-            error.clear();
+        if (!mDebugUI.Init(mDevice, mSwapchain, mWindow.GetHandle())) {
+            std::fprintf(stderr, "[app] DebugUI init failed: %s\n", moe::Error::Get().c_str());
+            moe::Error::Clear();
         } else {
             mUiActive = true;
         }
 
         moe::Defer im3dCleanup([&] { mIm3d.Destroy(); });
-        if (!mIm3d.Init(mDevice, mPipelineCache, mSwapchain, error)) {
-            std::fprintf(stderr, "[app] Im3d init failed: %s\n", error.c_str());
-            error.clear();
+        if (!mIm3d.Init(mDevice, mPipelineCache, mSwapchain)) {
+            std::fprintf(stderr, "[app] Im3d init failed: %s\n", moe::Error::Get().c_str());
+            moe::Error::Clear();
         }
 
-        AppContext ctx{mDevice, mPipelineCache, mWindow, mSwapchain, mIm3d, mInput};
+        AppContext ctx{mDevice, mPipelineCache, mWindow, mSwapchain, mIm3d, mInput, mAssets};
         if (callbacks.mSetup != nullptr && !callbacks.mSetup(callbacks.mUserdata, ctx)) {
-            error = "Setup failed";
-            return false;
+            return moe::Fail("Setup failed");
         }
 
         const float defaultClear[4] = {0.15f, 0.15f, 0.18f, 1.0f};
         const float* clear = callbacks.mClearColor != nullptr ? callbacks.mClearColor : defaultClear;
 
+        bool failed = false;
         auto lastFrame = std::chrono::steady_clock::now();
         while (!mWindow.ShouldClose()) {
             mWindow.PollEvents();
@@ -123,7 +127,8 @@ namespace examples {
 
             mCommandList.End();
             if (!mSwapchain.Present(mCommandList)) {
-                error = "Present failed";
+                moe::Error::Set("Present failed");
+                failed = true;
                 break;
             }
             mInput.EndFrame(); // clear per-frame edges + mouse deltas
@@ -147,6 +152,6 @@ namespace examples {
         if (callbacks.mShutdown != nullptr) {
             callbacks.mShutdown(callbacks.mUserdata, ctx);
         }
-        return error.empty();
+        return !failed;
     }
 }// namespace examples

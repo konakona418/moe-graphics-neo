@@ -1,4 +1,8 @@
 #include <RHI/Device.hpp>
+
+#include <Core/Defer.hpp>
+#include "TestSupport.hpp"
+#include <Core/Error.hpp>
 #include <RHI/Pipeline.hpp>
 #include <RHI/PipelineCache.hpp>
 #include <RHI/Shader.hpp>
@@ -9,10 +13,7 @@
 #include <string>
 
 int main() {
-    // All declarations at the top so every goto to cleanup below crosses no
-    // non-trivial initialization.
-    std::string error;
-
+    constexpr const char* kTestName = "Pipeline smoke";
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -33,55 +34,50 @@ int main() {
     moe::rhi::GraphicsPipeline graphicsPipeline;
 
     deviceInfo.mPipelineCache = &cache;
+
+    moe::Defer cleanup([&] {
+        cache.Destroy();
+        device.Destroy();
+    });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!computeShader.Load(MOE_SOURCE_DIR "/shaders/rhi/sample.comp.spv", moe::rhi::ShaderStage::kCompute)) {
-        error = computeShader.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!computeProgram.AddShader(computeShader)) {
-        error = "compute program add failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "compute program add failed");
     }
 
     computeState.mProgram = &computeProgram;
     if (!device.GetOrCreateComputePipeline(computeState, pipelineA)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     // cache dedup: same state must reuse the same node
     if (!device.GetOrCreateComputePipeline(computeState, pipelineB)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (cache.GetNodeCount() != 1) {
-        error = "cache dedup failed: expected 1 node";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "cache dedup failed: expected 1 node");
     }
 
     // workgroup size reflected from the shader
     pipelineA.GetWorkgroupSize(wx, wy, wz);
     if (wx != 64 || wy != 1 || wz != 1) {
-        error = "workgroup size reflection wrong";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "workgroup size reflection wrong");
     }
 
     // graphics pipeline (fullscreen triangle, no vertex buffer)
     if (!vertShader.Load(MOE_SOURCE_DIR "/shaders/rhi/fullscreen.vert.spv", moe::rhi::ShaderStage::kVertex)) {
-        error = vertShader.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!fragShader.Load(MOE_SOURCE_DIR "/shaders/rhi/flat.frag.spv", moe::rhi::ShaderStage::kFragment)) {
-        error = fragShader.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (!graphicsProgram.AddShader(vertShader) || !graphicsProgram.AddShader(fragShader)) {
-        error = "graphics program add failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "graphics program add failed");
     }
 
     graphicsState.mProgram = &graphicsProgram;
@@ -93,33 +89,21 @@ int main() {
     graphicsState.mDepthFormat = moe::rhi::Format::kD32Float;
 
     if (!device.GetOrCreateGraphicsPipeline(graphicsState, graphicsPipeline)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     if (cache.GetNodeCount() != 2) {
-        error = "expected 2 nodes after graphics pipeline";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "expected 2 nodes after graphics pipeline");
     }
 
     // manual reload invalidates the compute pipeline (and keeps the program usable)
     if (!cache.Reload(computeProgram)) {
-        error = "reload failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "reload failed");
     }
     if (!device.GetOrCreateComputePipeline(computeState, pipelineC)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     std::printf("Pipeline smoke passed.\n");
 
-cleanup:
-    cache.Destroy();
-    device.Destroy();
-
-    if (!error.empty()) {
-        std::fprintf(stderr, "Pipeline smoke FAILED: %s\n", error.c_str());
-        return EXIT_FAILURE;
-    }
     return EXIT_SUCCESS;
 }

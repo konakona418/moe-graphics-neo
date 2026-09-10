@@ -9,7 +9,7 @@
 #include "Neo/Texture.hpp"
 
 #include <cstdint>
-#include <string>
+#include <vector>
 
 namespace moe::neo {
     // GPU resources for one uploaded mesh. Vertex data is interleaved
@@ -45,7 +45,8 @@ namespace moe::neo {
     };
 
     // GPU resources for one uploaded texture. Destroy() releases the RHI
-    // image + sampler (deferred deletion; the leak trap fires if forgotten).
+    // image + sampler (deferred deletion; the RHI leak trap fires if
+    // forgotten).
     struct UploadedTexture {
         rhi::Image mImage;
         rhi::Sampler mSampler;
@@ -57,37 +58,48 @@ namespace moe::neo {
     };
 
     // Uploads CPU meshes/textures to GPU resources through host-visible
-    // staging buffers.
+    // staging buffers. Failures are recorded in moe::Error.
     class Uploader {
     public:
-        bool Init(rhi::Device& device, std::string& error);
+        bool Init(rhi::Device& device);
 
         // Uploads the whole mesh (all primitives concatenated; attribute layout
         // must be uniform across primitives).
-        bool UploadMesh(const Mesh& mesh, UploadedMesh& out, std::string& error);
+        bool UploadMesh(const Mesh& mesh, UploadedMesh& out);
+
+        // Uploads a single primitive into its own buffers. The content layer
+        // uses this to preserve per-material primitive boundaries (UploadMesh
+        // concatenates and would lose them).
+        bool UploadMeshPrimitive(const MeshPrimitive& primitive, UploadedMesh& out);
 
         // Overwrites vertexData.size() bytes at the start of an uploaded
         // vertex buffer (staging write + transfer->vertex-read barrier).
         // vertexData must use the same interleaved layout as the upload.
         bool UpdateMeshVertices(const UploadedMesh& mesh,
-                const uint8_t* vertexData, size_t byteCount, std::string& error);
+                const uint8_t* vertexData, size_t byteCount);
 
         // Uploads the texture pixels into a sampled image + linear sampler
         // (sRGB format when Texture::mSrgb is set). The image ends in
         // ShaderReadOnly layout; bind it with DescriptorSet::WriteImage.
-        bool UploadTexture(const Texture& texture, UploadedTexture& out, std::string& error);
+        bool UploadTexture(const Texture& texture, UploadedTexture& out);
 
         // Uploads raw bytes into a device-local buffer (e.g. instance data).
         // The buffer is created with the given usage plus TransferDst.
         bool UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
-                rhi::Buffer& out, std::string& error);
+                rhi::Buffer& out);
 
     private:
         // Shared staging plumbing: a host-visible transfer-source buffer, and
         // staging->buffer copy + barrier + submit.
-        bool CreateStagingBuffer(size_t size, rhi::Buffer& out, std::string& error);
+        bool CreateStagingBuffer(size_t size, rhi::Buffer& out);
         bool UploadBytes(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
-                bool waitForCompletion, std::string& error);
+                bool waitForCompletion);
+        // Creates the vertex/index buffers and uploads packed data through a
+        // single staging buffer.
+        bool UploadMeshData(const std::vector<uint8_t>& vertexData,
+                const std::vector<uint32_t>& indexData, uint32_t stride,
+                uint32_t normalOffset, uint32_t uvOffset, uint32_t colorOffset,
+                UploadedMesh& out);
 
         rhi::Device* mDevice{nullptr};
     };

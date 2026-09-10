@@ -1,5 +1,6 @@
 #include "RHI/BindlessSet.hpp"
 
+#include "Core/Error.hpp"
 #include "RHI/CommandList.hpp"
 #include "RHI/Device.hpp"
 #include "RHI/Image.hpp"
@@ -25,7 +26,7 @@ namespace moe::rhi {
         MOE_RHI_ASSERT(mImpl == nullptr, "BindlessSet leaked: Destroy() not called");
     }
 
-    bool BindlessSet::Init(Device& device, std::string& error) {
+    bool BindlessSet::Init(Device& device) {
         if (mImpl != nullptr) {
             return true; // already initialized
         }
@@ -46,7 +47,7 @@ namespace moe::rhi {
         poolInfo.pPoolSizes = poolSizes;
         if (vkCreateDescriptorPool(mImpl->mDevice->mDevice, &poolInfo, nullptr, &mImpl->mPool)
                 != VK_SUCCESS) {
-            error = "BindlessSet: descriptor pool creation failed";
+            moe::Error::Set("BindlessSet: descriptor pool creation failed");
             mImpl.reset();
             return false;
         }
@@ -71,7 +72,7 @@ namespace moe::rhi {
         layoutInfo.pBindings = bindings;
         if (vkCreateDescriptorSetLayout(mImpl->mDevice->mDevice, &layoutInfo, nullptr,
                     &mImpl->mLayout) != VK_SUCCESS) {
-            error = "BindlessSet: layout creation failed";
+            moe::Error::Set("BindlessSet: layout creation failed");
             vkDestroyDescriptorPool(mImpl->mDevice->mDevice, mImpl->mPool, nullptr);
             mImpl.reset();
             return false;
@@ -84,7 +85,7 @@ namespace moe::rhi {
         allocInfo.pSetLayouts = &mImpl->mLayout;
         if (vkAllocateDescriptorSets(mImpl->mDevice->mDevice, &allocInfo, &mImpl->mSet)
                 != VK_SUCCESS) {
-            error = "BindlessSet: set allocation failed";
+            moe::Error::Set("BindlessSet: set allocation failed");
             vkDestroyDescriptorSetLayout(mImpl->mDevice->mDevice, mImpl->mLayout, nullptr);
             vkDestroyDescriptorPool(mImpl->mDevice->mDevice, mImpl->mPool, nullptr);
             mImpl.reset();
@@ -99,7 +100,7 @@ namespace moe::rhi {
         nearestInfo.mMagFilter = rhi::Filter::kNearest;
         if (!device.CreateSampler(nearestInfo, mImpl->mDefaultNearest)
                 || !AddSampler(0, mImpl->mDefaultNearest)) {
-            error = "BindlessSet: default nearest sampler failed";
+            moe::Error::Set("BindlessSet: default nearest sampler failed");
             Destroy();
             return false;
         }
@@ -108,7 +109,7 @@ namespace moe::rhi {
         linearInfo.mMagFilter = rhi::Filter::kLinear;
         if (!device.CreateSampler(linearInfo, mImpl->mDefaultLinear)
                 || !AddSampler(1, mImpl->mDefaultLinear)) {
-            error = "BindlessSet: default linear sampler failed";
+            moe::Error::Set("BindlessSet: default linear sampler failed");
             Destroy();
             return false;
         }

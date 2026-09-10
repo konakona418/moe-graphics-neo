@@ -10,5 +10,5 @@ namespace moe::neo {
     // transforms, meshes, materials, skeletons and animation clips. Images are
     // referenced but pixel decoding is deferred (Texture entries carry names;
     // channels == 0 means undecoded).
-    bool ImportGltf(const char* path, Scene& outScene, std::string& outError);
+    bool ImportGltf(const char* path, Scene& outScene);
 }// namespace moe::neo

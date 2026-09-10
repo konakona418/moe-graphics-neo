@@ -1,3 +1,4 @@
+#include <Core/Error.hpp>
 #include <Neo/Importer.hpp>
 
 #include <cstdio>
@@ -15,9 +16,8 @@
 
 int main() {
     moe::neo::Scene scene;
-    std::string error;
-    if (!moe::neo::ImportGltf(MOE_SOURCE_DIR "/test/assets/minimal.gltf", scene, error)) {
-        std::fprintf(stderr, "Import FAILED: %s\n", error.c_str());
+    if (!moe::neo::ImportGltf(MOE_SOURCE_DIR "/test/assets/minimal.gltf", scene)) {
+        std::fprintf(stderr, "Import FAILED: %s\n", moe::Error::Get().c_str());
         return EXIT_FAILURE;
     }
 

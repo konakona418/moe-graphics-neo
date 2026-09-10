@@ -36,7 +36,7 @@ namespace moe::ui {
         // window handle. Call after the swapchain exists, destroy before the
         // device.
         bool Init(moe::rhi::Device& device, moe::rhi::Swapchain& swapchain,
-                uintptr_t glfwWindow, std::string& error);
+                uintptr_t glfwWindow);
 
         // Starts a new ImGui frame (record UI windows after this, then Render).
         void BeginFrame(float deltaSeconds);

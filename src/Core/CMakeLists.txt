@@ -1,4 +1,5 @@
 add_library(moe-core STATIC
+  Error.cpp
   FileIo.cpp
   Logger.cpp
 )

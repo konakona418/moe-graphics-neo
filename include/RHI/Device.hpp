@@ -47,8 +47,9 @@ namespace moe::rhi {
     public:
         Device();
 
-        // Creates the device. Returns false on failure; GetLastError() then
-        // holds the reason. The device must outlive all resources it created.
+        // Creates the device. Returns false on failure; moe::Error::Get()
+        // then holds the reason. The device must outlive all resources it
+        // created.
         static bool Create(const DeviceCreateInfo& info, Device& outDevice);
 
         // Explicit teardown (idempotent). Must be called before the object
@@ -93,15 +94,11 @@ namespace moe::rhi {
         // Vulkan directly (e.g. ImGui). See RhiVulkanHandles.
         bool GetVulkanHandles(RhiVulkanHandles& outHandles) const;
 
-        // Message describing the most recent failed operation, if any.
-        const std::string& GetLastError() const;
-
     private:
         friend class DefaultPipelineCache;
         friend class BindlessSet;
 
         PipelineCache* mPipelineCache{nullptr};
         std::unique_ptr<DeviceImpl> mImpl;
-        std::string mLastError;
     };
 }// namespace moe::rhi

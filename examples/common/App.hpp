@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Neo/Assets.hpp>
 #include <Neo/Input.hpp>
 #include <Neo/Window.hpp>
 #include <RHI/CommandList.hpp>
@@ -20,6 +21,7 @@ namespace examples {
         moe::rhi::Swapchain& mSwapchain;
         moe::ui::Im3dDrawer& mIm3d;
         moe::neo::Input& mInput;
+        moe::neo::Assets& mAssets;
     };
 
     struct AppCallbacks {
@@ -57,7 +59,7 @@ namespace examples {
         App& operator=(const App&) = delete;
 
         bool Run(const char* title, uint32_t width, uint32_t height,
-                const AppCallbacks& callbacks, std::string& error);
+                const AppCallbacks& callbacks);
 
     private:
         moe::rhi::Device mDevice;
@@ -66,6 +68,7 @@ namespace examples {
         moe::rhi::Swapchain mSwapchain;
         moe::rhi::CommandList mCommandList;
         moe::neo::Input mInput;
+        moe::neo::Assets mAssets;
         moe::ui::DebugUI mDebugUI;
         moe::ui::Im3dDrawer mIm3d;
         bool mUiActive{false};

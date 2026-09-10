@@ -51,6 +51,19 @@ namespace moe::neo {
             return Handle<T>{index, slot->mGeneration};
         }
 
+        // Constructs T in a fresh slot from the given arguments. Used for
+        // values that are not movable (RHI handles, shader programs).
+        template<typename... Args>
+        Handle<T> Emplace(Args&&... args) {
+            const uint32_t index = mSlots.Acquire();
+            Slot* slot = mSlots.Get(index);
+            slot->mGeneration += 1;
+            new (&slot->mValue) T(std::forward<Args>(args)...);
+            slot->mOccupied = true;
+            ++mCount;
+            return Handle<T>{index, slot->mGeneration};
+        }
+
         void Remove(Handle<T> handle) {
             Slot* slot = Resolve(handle);
             if (slot == nullptr) {

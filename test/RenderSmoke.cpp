@@ -1,4 +1,8 @@
 #include <RHI/Buffer.hpp>
+
+#include <Core/Defer.hpp>
+#include "TestSupport.hpp"
+#include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/Device.hpp>
 #include <RHI/Image.hpp>
@@ -15,8 +19,7 @@
 // CommandList::BeginRendering, then exercises CopyImage (1:1, same format) and
 // BlitImage (scaled down) and read-back-verifies both. Validation is on.
 int main() {
-    std::string error;
-
+    constexpr const char* kTestName = "Render smoke (copy)";
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -48,19 +51,27 @@ int main() {
     moe::rhi::SyncInfo toTransferDst{};
     moe::rhi::SyncInfo transferToTransfer{};
 
+
+    moe::Defer cleanup([&] {
+        commandList.Destroy();
+        readbackSmall.Destroy();
+        readback.Destroy();
+        blitDst.Destroy();
+        copyDst.Destroy();
+        colorTarget.Destroy();
+        cache.Destroy();
+        device.Destroy();
+    });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!vertShader.Load(MOE_SOURCE_DIR "/shaders/rhi/fullscreen.vert.spv", moe::rhi::ShaderStage::kVertex)
             || !fragShader.Load(MOE_SOURCE_DIR "/shaders/rhi/flat.frag.spv", moe::rhi::ShaderStage::kFragment)) {
-        error = "shader load failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "shader load failed");
     }
     if (!graphicsProgram.AddShader(vertShader) || !graphicsProgram.AddShader(fragShader)) {
-        error = "graphics program add failed";
-        goto cleanup;
+        return moe::test::Fail(kTestName, "graphics program add failed");
     }
 
     state.mProgram = &graphicsProgram;
@@ -70,8 +81,7 @@ int main() {
     state.mColorFormats[0] = moe::rhi::Format::kR8G8B8A8Unorm;
     state.mBlendAttachmentCount = 1;
     if (!device.GetOrCreateGraphicsPipeline(state, graphicsPipeline)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     targetInfo.mType = moe::rhi::ImageType::k2D;
@@ -81,39 +91,33 @@ int main() {
     targetInfo.mFormat = moe::rhi::Format::kR8G8B8A8Unorm;
     targetInfo.mUsage = moe::rhi::ImageUsage::kColorAttachment | moe::rhi::ImageUsage::kTransferSrc;
     if (!device.CreateImage(targetInfo, colorTarget)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     targetInfo.mUsage = moe::rhi::ImageUsage::kTransferDst | moe::rhi::ImageUsage::kTransferSrc;
     if (!device.CreateImage(targetInfo, copyDst)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     targetInfo.mWidth = kSmall;
     targetInfo.mHeight = kSmall;
     if (!device.CreateImage(targetInfo, blitDst)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     readbackInfo.mSize = sizeof(uint32_t) * kPixelCount;
     readbackInfo.mUsage = moe::rhi::BufferUsage::kTransferDst;
     readbackInfo.mCpuVisible = true;
     if (!device.CreateBuffer(readbackInfo, readback)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
     readbackInfo.mSize = sizeof(uint32_t) * kSmallPixelCount;
     if (!device.CreateBuffer(readbackInfo, readbackSmall)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     if (!device.CreateCommandList(commandList)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     toColor.mSrcStage = moe::rhi::PipelineStage::kTopOfPipe;
@@ -169,23 +173,21 @@ int main() {
 
     commandList.End();
     if (!device.Submit(commandList, true)) {
-        error = device.GetLastError();
-        goto cleanup;
+        return moe::test::Fail(kTestName);
     }
 
     {
         const uint32_t expected = 0xFF0000FFu; // solid red, ABGR in R8G8B8A8
         auto* data = static_cast<uint32_t*>(readback.Map());
         if (!data) {
-            error = "failed to map copy readback";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map copy readback");
         }
         for (uint32_t i = 0; i < kPixelCount; ++i) {
             if (data[i] != expected) {
                 std::fprintf(stderr, "Render smoke (copy) FAILED: data[%u] = 0x%08X, expected 0x%08X\n",
                         i, data[i], expected);
                 readback.Unmap();
-                goto cleanup;
+                return moe::test::Fail(kTestName);
             }
         }
         readback.Unmap();
@@ -195,15 +197,14 @@ int main() {
         const uint32_t expected = 0xFF0000FFu; // scaled red stays red
         auto* data = static_cast<uint32_t*>(readbackSmall.Map());
         if (!data) {
-            error = "failed to map blit readback";
-            goto cleanup;
+            return moe::test::Fail(kTestName, "failed to map blit readback");
         }
         for (uint32_t i = 0; i < kSmallPixelCount; ++i) {
             if (data[i] != expected) {
                 std::fprintf(stderr, "Render smoke (blit) FAILED: data[%u] = 0x%08X, expected 0x%08X\n",
                         i, data[i], expected);
                 readbackSmall.Unmap();
-                goto cleanup;
+                return moe::test::Fail(kTestName);
             }
         }
         readbackSmall.Unmap();
@@ -211,19 +212,5 @@ int main() {
 
     std::printf("Render smoke passed.\n");
 
-cleanup:
-    commandList.Destroy();
-    readbackSmall.Destroy();
-    readback.Destroy();
-    blitDst.Destroy();
-    copyDst.Destroy();
-    colorTarget.Destroy();
-    cache.Destroy();
-    device.Destroy();
-
-    if (!error.empty()) {
-        std::fprintf(stderr, "Render smoke FAILED: %s\n", error.c_str());
-        return EXIT_FAILURE;
-    }
     return EXIT_SUCCESS;
 }

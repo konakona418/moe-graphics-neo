@@ -21,7 +21,7 @@ namespace moe::neo {
 
         // Creates the GLFW window and a surface on the device's instance.
         bool Create(moe::rhi::Device& device, uint32_t width, uint32_t height,
-                const char* title, std::string& error);
+                const char* title);
 
         bool ShouldClose() const;
         void PollEvents();

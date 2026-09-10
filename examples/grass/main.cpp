@@ -1,5 +1,6 @@
 #include <examples/common/App.hpp>
 
+#include <Core/Error.hpp>
 #include <Neo/Renderer.hpp>
 #include <Neo/SwapchainImage.hpp>
 #include <Neo/TextureLoader.hpp>
@@ -250,21 +251,20 @@ namespace {
 
     bool Setup(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<PostfxData*>(userdata);
-        std::string error;
 
-        if (!data->mUploader.Init(ctx.mDevice, error)) {
-            std::fprintf(stderr, "grass: uploader: %s\n", error.c_str());
+        if (!data->mUploader.Init(ctx.mDevice)) {
+            std::fprintf(stderr, "grass: uploader: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
-        if (!data->mUploader.UploadMesh(MakeBoxMesh(), data->mBoxMesh, error)
-                || !data->mUploader.UploadMesh(MakeGrassMesh(), data->mGrassMesh, error)
-                || !data->mUploader.UploadMesh(MakeGroundMesh(), data->mGroundMesh, error)) {
-            std::fprintf(stderr, "grass: mesh upload: %s\n", error.c_str());
+        if (!data->mUploader.UploadMesh(MakeBoxMesh(), data->mBoxMesh)
+                || !data->mUploader.UploadMesh(MakeGrassMesh(), data->mGrassMesh)
+                || !data->mUploader.UploadMesh(MakeGroundMesh(), data->mGroundMesh)) {
+            std::fprintf(stderr, "grass: mesh upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        if (!data->mUploader.UploadTexture(MakeCheckerTexture(), data->mBoxTexture, error)) {
-            std::fprintf(stderr, "grass: texture upload: %s\n", error.c_str());
+        if (!data->mUploader.UploadTexture(MakeCheckerTexture(), data->mBoxTexture)) {
+            std::fprintf(stderr, "grass: texture upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -282,8 +282,8 @@ namespace {
         }
         if (!data->mUploader.UploadData(reinterpret_cast<const uint8_t*>(instances.data()),
                 instances.size() * sizeof(glm::mat4), moe::rhi::BufferUsage::kVertex,
-                data->mInstanceBuffer, error)) {
-            std::fprintf(stderr, "grass: instance upload: %s\n", error.c_str());
+                data->mInstanceBuffer)) {
+            std::fprintf(stderr, "grass: instance upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -323,15 +323,15 @@ namespace {
         }
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), error)) {
-            std::fprintf(stderr, "grass: renderer: %s\n", error.c_str());
+                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight())) {
+            std::fprintf(stderr, "grass: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }
         data->mSceneTarget = data->mRenderer.CreateRenderTarget(
                 ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(),
-                moe::rhi::Format::kR8G8B8A8Unorm, true, error);
+                moe::rhi::Format::kR8G8B8A8Unorm, true);
         if (!data->mSceneTarget.IsValid()) {
-            std::fprintf(stderr, "grass: scene target: %s\n", error.c_str());
+            std::fprintf(stderr, "grass: scene target: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -342,7 +342,7 @@ namespace {
         noiseInfo.mFormat = moe::rhi::Format::kR8G8B8A8Unorm;
         noiseInfo.mUsage = moe::rhi::ImageUsage::kStorage | moe::rhi::ImageUsage::kSampled;
         if (!ctx.mDevice.CreateImage(noiseInfo, data->mNoiseImage)) {
-            std::fprintf(stderr, "grass: noise image: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "grass: noise image: %s\n", moe::Error::Get().c_str());
             return false;
         }
         moe::rhi::SamplerCreateInfo samplerInfo{};
@@ -355,7 +355,7 @@ namespace {
         moe::rhi::ComputePipelineState noiseState{};
         noiseState.mProgram = &data->mNoiseProgram;
         if (!ctx.mDevice.GetOrCreateComputePipeline(noiseState, data->mNoisePipeline)) {
-            std::fprintf(stderr, "grass: noise pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "grass: noise pipeline: %s\n", moe::Error::Get().c_str());
             return false;
         }
         moe::rhi::DescriptorSetLayout noiseLayout;
@@ -475,9 +475,8 @@ int main() {
     callbacks.mUserdata = &data;
 
     examples::App app;
-    std::string error;
-    if (!app.Run("grass demo", 1280, 720, callbacks, error)) {
-        std::fprintf(stderr, "grass: app: %s\n", error.c_str());
+    if (!app.Run("grass demo", 1280, 720, callbacks)) {
+        std::fprintf(stderr, "grass: app: %s\n", moe::Error::Get().c_str());
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

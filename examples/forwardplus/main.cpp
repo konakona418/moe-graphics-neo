@@ -1,14 +1,13 @@
 #include <examples/common/App.hpp>
 
-#include <Neo/Uploader.hpp>
+#include <Core/Error.hpp>
+#include <Neo/Assets.hpp>
+#include <Neo/Renderer.hpp>
+#include <Neo/SwapchainImage.hpp>
+#include <RHI/Buffer.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
-#include <RHI/Device.hpp>
-#include <RHI/Image.hpp>
 #include <RHI/Pipeline.hpp>
-#include <RHI/PipelineCache.hpp>
-#include <RHI/RenderGraph.hpp>
-#include <RHI/Shader.hpp>
 #include <UI/Im3dDrawer.hpp>
 
 #include <im3d.h>
@@ -17,23 +16,16 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #endif
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/glm.hpp>
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <string>
 #include <vector>
 
-// Forward+ demo: 200 point lights are culled per 16x16 tile into a structured
-// buffer by a compute pass, then the forward shading pass lights every pixel
-// with only its tile's lights. RenderGraph orchestrates [cull -> forward
-// (color + depth)], result is copied to the swapchain.
-
 namespace {
-    constexpr uint32_t kLightCount = 200;
+    constexpr uint32_t kLightCount = 256;
     constexpr uint32_t kTileSize = 16;
-    constexpr uint32_t kMaxLightsPerTile = 64;
+    constexpr uint32_t kMaxLightsPerTile = 128;
 
     struct Light {
         glm::vec3 mPosition;
@@ -64,70 +56,22 @@ namespace {
         float mPadding; // 4
     }; // 100
 
-    struct CullPass : moe::rhi::Pass {
-        moe::rhi::ComputePipeline* mPipeline{nullptr};
-        moe::rhi::DescriptorSet* mSet{nullptr};
-        CullPushConstants* mPc{nullptr};
-        uint32_t mTilesX{0};
-        uint32_t mTilesY{0};
-
-        bool Execute(moe::rhi::CommandList& cmd) override {
-            cmd.SetPushConstants(*mPipeline, 0, sizeof(CullPushConstants), mPc);
-            cmd.BindDescriptorSet(*mPipeline, *mSet, 0);
-            cmd.Dispatch(*mPipeline, mTilesX, mTilesY, 1);
-            return true;
-        }
-    };
-
-    struct ForwardPass : moe::rhi::Pass {
-        moe::rhi::GraphicsPipeline* mPipeline{nullptr};
-        moe::rhi::DescriptorSet* mSet{nullptr};
-        moe::rhi::Image* mColorTarget{nullptr};
-        moe::rhi::Image* mDepth{nullptr};
-        moe::neo::UploadedMesh* mMesh{nullptr};
-        moe::ui::Im3dDrawer* mIm3d{nullptr};
-        ForwardPushConstants* mPc{nullptr};
-        uint32_t mWidth{0};
-        uint32_t mHeight{0};
-
-        bool Execute(moe::rhi::CommandList& cmd) override {
-            if (mIm3d != nullptr && mIm3d->IsActive()) {
-                mIm3d->UploadVertices(cmd); // transfer must be outside the pass
-            }
-            const float clear[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-            cmd.BeginRendering(*mColorTarget, clear, mDepth, 1.0f);
-            cmd.BindGraphicsPipeline(*mPipeline);
-            cmd.SetViewport(mWidth, mHeight);
-            cmd.BindDescriptorSet(*mPipeline, *mSet, 0);
-            cmd.SetPushConstants(*mPipeline, 0, sizeof(ForwardPushConstants), mPc);
-            cmd.BindVertexBuffer(mMesh->mVertexBuffer, 0);
-            cmd.BindIndexBuffer(mMesh->mIndexBuffer);
-            cmd.DrawIndexed(mMesh->mIndexCount, 1, 0, 0, 0);
-            if (mIm3d != nullptr && mIm3d->IsActive()) {
-                mIm3d->Record(cmd);
-            }
-            cmd.EndRendering();
-            return true;
-        }
-    };
-
+    // Forward+: a raw compute pass culls lights into per-tile lists between
+    // Renderer passes, then a Renderer pass draws the scene with the tile
+    // buffers bound as storage buffers.
     struct ForwardPlusData {
+        moe::neo::Renderer mRenderer;
+        moe::neo::SwapchainImage mFrame;
+        moe::neo::ProgramHandle mForwardProgram;
         moe::neo::UploadedMesh mMesh;
-        moe::rhi::Image mColorTarget;
-        moe::rhi::Image mDepth;
         moe::rhi::Buffer mLights;
         moe::rhi::Buffer mTileCounts;
         moe::rhi::Buffer mLightIndices;
         moe::rhi::Shader mCullComp;
-        moe::rhi::Shader mVert;
-        moe::rhi::Shader mFrag;
         moe::rhi::ShaderProgram mCullProgram;
-        moe::rhi::ShaderProgram mForwardProgram;
         moe::rhi::ComputePipeline mCullPipeline;
-        moe::rhi::GraphicsPipeline mForwardPipeline;
         moe::rhi::DescriptorSetLayout mSetLayout;
         moe::rhi::DescriptorSet mSet;
-        moe::rhi::RenderGraph mGraph;
         moe::ui::Im3dDrawer* mIm3d{nullptr};
         std::vector<Light> mLightData; // CPU copy for the Im3d gizmos
         bool mShowGizmos{true};
@@ -136,8 +80,15 @@ namespace {
         glm::mat4 mViewProj{1.0f};
         CullPushConstants mCullPc{};
         ForwardPushConstants mForwardPc{};
-        CullPass mCullPass;
-        ForwardPass mForwardPass;
+        uint32_t mTilesX{0};
+        uint32_t mTilesY{0};
+        int32_t mPcViewProj{-1};
+        int32_t mPcCameraPos{-1};
+        int32_t mPcTileSize{-1};
+        int32_t mPcMaxLights{-1};
+        int32_t mPcScreenWidth{-1};
+        int32_t mPcScreenHeight{-1};
+        int32_t mPcTileCountX{-1};
     };
 
     void AppendBox(moe::neo::Mesh& mesh, const glm::vec3& center, const glm::vec3& half) {
@@ -156,33 +107,32 @@ namespace {
                 {0, 1, 2, 3}, {5, 4, 7, 6}, {0, 4, 5, 1}, {3, 2, 6, 7}, {0, 3, 7, 4}, {1, 5, 6, 2}};
         const glm::vec2 uvs[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
 
-        const uint32_t baseVert = static_cast<uint32_t>(mesh.mPrimitives[0].mPositions.size());
+        moe::neo::MeshPrimitive& prim = mesh.mPrimitives[0];
         for (int face = 0; face < 6; ++face) {
             for (int i = 0; i < 4; ++i) {
-                mesh.mPrimitives[0].mPositions.push_back(corners[faceCorners[face][i]]);
-                mesh.mPrimitives[0].mNormals.push_back(faceNormals[face]);
-                mesh.mPrimitives[0].mUv0.push_back(uvs[i]);
+                const int corner = faceCorners[face][i];
+                prim.mPositions.push_back(corners[corner]);
+                prim.mNormals.push_back(faceNormals[face]);
+                prim.mUv0.push_back(uvs[i]);
             }
-            const uint32_t base = baseVert + static_cast<uint32_t>(face) * 4;
-            // CCW winding seen from outside (Vulkan front face = CCW)
-            mesh.mPrimitives[0].mIndices.push_back(base);
-            mesh.mPrimitives[0].mIndices.push_back(base + 2);
-            mesh.mPrimitives[0].mIndices.push_back(base + 1);
-            mesh.mPrimitives[0].mIndices.push_back(base);
-            mesh.mPrimitives[0].mIndices.push_back(base + 3);
-            mesh.mPrimitives[0].mIndices.push_back(base + 2);
+            const uint32_t base = static_cast<uint32_t>(prim.mPositions.size()) - 4;
+            prim.mIndices.push_back(base);
+            prim.mIndices.push_back(base + 2);
+            prim.mIndices.push_back(base + 1);
+            prim.mIndices.push_back(base);
+            prim.mIndices.push_back(base + 3);
+            prim.mIndices.push_back(base + 2);
         }
     }
 
     bool Setup(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<ForwardPlusData*>(userdata);
-        std::string error;
 
         const uint32_t width = ctx.mSwapchain.GetWidth();
         const uint32_t height = ctx.mSwapchain.GetHeight();
-        const uint32_t tilesX = (width + kTileSize - 1) / kTileSize;
-        const uint32_t tilesY = (height + kTileSize - 1) / kTileSize;
-        const uint32_t tileCount = tilesX * tilesY;
+        data->mTilesX = (width + kTileSize - 1) / kTileSize;
+        data->mTilesY = (height + kTileSize - 1) / kTileSize;
+        const uint32_t tileCount = data->mTilesX * data->mTilesY;
 
         // ---- scene: ground + a few boxes (world-space baked) ----
         moe::neo::Mesh mesh;
@@ -196,31 +146,12 @@ namespace {
         AppendBox(mesh, glm::vec3(8.0f, 1.2f, 5.0f), glm::vec3(1.2f, 1.2f, 1.2f));
 
         moe::neo::Uploader uploader;
-        if (!uploader.Init(ctx.mDevice, error)) {
-            std::fprintf(stderr, "forwardplus: uploader: %s\n", error.c_str());
+        if (!uploader.Init(ctx.mDevice)) {
+            std::fprintf(stderr, "forwardplus: uploader: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        if (!uploader.UploadMesh(mesh, data->mMesh, error)) {
-            std::fprintf(stderr, "forwardplus: upload: %s\n", error.c_str());
-            return false;
-        }
-
-        // ---- color target + depth ----
-        moe::rhi::ImageCreateInfo targetInfo{};
-        targetInfo.mType = moe::rhi::ImageType::k2D;
-        targetInfo.mWidth = width;
-        targetInfo.mHeight = height;
-        targetInfo.mDepth = 1;
-        targetInfo.mFormat = ctx.mSwapchain.GetFormat();
-        targetInfo.mUsage = moe::rhi::ImageUsage::kColorAttachment | moe::rhi::ImageUsage::kTransferSrc;
-        if (!ctx.mDevice.CreateImage(targetInfo, data->mColorTarget)) {
-            std::fprintf(stderr, "forwardplus: color target: %s\n", ctx.mDevice.GetLastError().c_str());
-            return false;
-        }
-        targetInfo.mFormat = moe::rhi::Format::kD32Float;
-        targetInfo.mUsage = moe::rhi::ImageUsage::kDepthAttachment;
-        if (!ctx.mDevice.CreateImage(targetInfo, data->mDepth)) {
-            std::fprintf(stderr, "forwardplus: depth: %s\n", ctx.mDevice.GetLastError().c_str());
+        if (!uploader.UploadMesh(mesh, data->mMesh)) {
+            std::fprintf(stderr, "forwardplus: upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -230,18 +161,18 @@ namespace {
         bufferInfo.mUsage = moe::rhi::BufferUsage::kStorage;
         bufferInfo.mCpuVisible = true;
         if (!ctx.mDevice.CreateBuffer(bufferInfo, data->mLights)) {
-            std::fprintf(stderr, "forwardplus: lights buffer: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "forwardplus: lights buffer: %s\n", moe::Error::Get().c_str());
             return false;
         }
         bufferInfo.mCpuVisible = false;
         bufferInfo.mSize = sizeof(uint32_t) * tileCount;
         if (!ctx.mDevice.CreateBuffer(bufferInfo, data->mTileCounts)) {
-            std::fprintf(stderr, "forwardplus: tile counts: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "forwardplus: tile counts: %s\n", moe::Error::Get().c_str());
             return false;
         }
         bufferInfo.mSize = sizeof(uint32_t) * tileCount * kMaxLightsPerTile;
         if (!ctx.mDevice.CreateBuffer(bufferInfo, data->mLightIndices)) {
-            std::fprintf(stderr, "forwardplus: light indices: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "forwardplus: light indices: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -258,7 +189,8 @@ namespace {
             };
             for (uint32_t i = 0; i < kLightCount; ++i) {
                 Light light;
-                light.mPosition = glm::vec3(rnd() * 36.0f - 18.0f, rnd() * 3.0f + 1.0f, rnd() * 36.0f - 18.0f);
+                light.mPosition = glm::vec3(rnd() * 36.0f - 18.0f, rnd() * 3.0f + 1.0f,
+                        rnd() * 36.0f - 18.0f);
                 light.mRadius = rnd() * 3.0f + 2.0f;
                 const float t = rnd() * 0.6f + 0.4f;
                 light.mColor = rnd() < 0.5f
@@ -270,166 +202,61 @@ namespace {
             data->mLights.Unmap();
         }
 
-        // ---- shaders + pipelines ----
+        // ---- cull compute (raw: runs between Renderer passes) ----
         if (!data->mCullComp.Load(MOE_SOURCE_DIR "/shaders/examples/forwardplus_cull.comp.spv",
-                        moe::rhi::ShaderStage::kCompute)
-                || !data->mVert.Load(MOE_SOURCE_DIR "/shaders/examples/forwardplus.vert.spv",
-                        moe::rhi::ShaderStage::kVertex)
-                || !data->mFrag.Load(MOE_SOURCE_DIR "/shaders/examples/forwardplus.frag.spv",
-                        moe::rhi::ShaderStage::kFragment)) {
-            std::fprintf(stderr, "forwardplus: shader load failed\n");
+                    moe::rhi::ShaderStage::kCompute)
+                || !data->mCullProgram.AddShader(data->mCullComp)) {
+            std::fprintf(stderr, "forwardplus: cull shader: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        if (!data->mCullProgram.AddShader(data->mCullComp)
-                || !data->mForwardProgram.AddShader(data->mVert)
-                || !data->mForwardProgram.AddShader(data->mFrag)) {
-            std::fprintf(stderr, "forwardplus: program add failed\n");
-            return false;
-        }
-
         moe::rhi::ComputePipelineState cullState{};
         cullState.mProgram = &data->mCullProgram;
-        if (!ctx.mDevice.GetOrCreateComputePipeline(cullState, data->mCullPipeline)) {
-            std::fprintf(stderr, "forwardplus: cull pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
-            return false;
-        }
-
-        moe::rhi::GraphicsPipelineState forwardState{};
-        forwardState.mProgram = &data->mForwardProgram;
-        forwardState.mTopology = moe::rhi::PrimitiveTopology::kTriangleList;
-        forwardState.mRaster.mCullMode = moe::rhi::CullMode::kBack;
-        forwardState.mColorFormatCount = 1;
-        forwardState.mColorFormats[0] = ctx.mSwapchain.GetFormat();
-        forwardState.mBlendAttachmentCount = 1;
-        forwardState.mDepth.mTestEnable = true;
-        forwardState.mDepth.mWriteEnable = true;
-        forwardState.mDepth.mCompareOp = moe::rhi::CompareOp::kLessEqual;
-        forwardState.mDepthFormat = moe::rhi::Format::kD32Float;
-        // vertex layout matching the Uploader interleave: pos@0, nrm@12, uv@24, stride 32
-        forwardState.mVertexBindingCount = 1;
-        forwardState.mVertexBindings[0] = {0, 32, false};
-        forwardState.mVertexAttributeCount = 3;
-        forwardState.mVertexAttributes[0] = {0, 0, moe::rhi::Format::kR32G32B32Float, 0};
-        forwardState.mVertexAttributes[1] = {1, 0, moe::rhi::Format::kR32G32B32Float, 12};
-        forwardState.mVertexAttributes[2] = {2, 0, moe::rhi::Format::kR32G32Float, 24};
-        if (!ctx.mDevice.GetOrCreateGraphicsPipeline(forwardState, data->mForwardPipeline)) {
-            std::fprintf(stderr, "forwardplus: forward pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
-            return false;
-        }
-
-        // ---- descriptor set (shared by both pipelines: set 0, bindings 0-2) ----
-        if (!data->mForwardPipeline.GetDescriptorSetLayout(0, data->mSetLayout)) {
-            std::fprintf(stderr, "forwardplus: no descriptor set layout 0\n");
-            return false;
-        }
-        if (!ctx.mDevice.CreateDescriptorSet(data->mSetLayout, data->mSet)) {
-            std::fprintf(stderr, "forwardplus: descriptor set: %s\n", ctx.mDevice.GetLastError().c_str());
-            return false;
-        }
-        if (!data->mSet.WriteBuffer(0, data->mLights)
+        if (!ctx.mDevice.GetOrCreateComputePipeline(cullState, data->mCullPipeline)
+                || !data->mCullPipeline.GetDescriptorSetLayout(0, data->mSetLayout)
+                || !ctx.mDevice.CreateDescriptorSet(data->mSetLayout, data->mSet)
+                || !data->mSet.WriteBuffer(0, data->mLights)
                 || !data->mSet.WriteBuffer(1, data->mTileCounts)
                 || !data->mSet.WriteBuffer(2, data->mLightIndices)) {
-            std::fprintf(stderr, "forwardplus: descriptor write failed\n");
+            std::fprintf(stderr, "forwardplus: cull pipeline/set: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
-        // ---- graph: [cull -> buffers] then [forward -> color + depth] ----
-        data->mCullPass.mPipeline = &data->mCullPipeline;
-        data->mCullPass.mSet = &data->mSet;
-        data->mCullPass.mPc = &data->mCullPc;
-        data->mCullPass.mTilesX = tilesX;
-        data->mCullPass.mTilesY = tilesY;
-        data->mForwardPass.mPipeline = &data->mForwardPipeline;
-        data->mForwardPass.mSet = &data->mSet;
-        data->mForwardPass.mColorTarget = &data->mColorTarget;
-        data->mForwardPass.mDepth = &data->mDepth;
-        data->mForwardPass.mMesh = &data->mMesh;
-        data->mForwardPass.mPc = &data->mForwardPc;
-        data->mForwardPass.mWidth = width;
-        data->mForwardPass.mHeight = height;
+        // ---- forward program (content layer) + renderer ----
+        data->mForwardProgram = ctx.mAssets.LoadGraphicsProgram(
+                MOE_SOURCE_DIR "/shaders/examples/forwardplus.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/forwardplus.frag.spv");
+        if (!data->mForwardProgram.IsValid()) {
+            std::fprintf(stderr, "forwardplus: forward shader: %s\n", moe::Error::Get().c_str());
+            return false;
+        }
+        if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, width, height)) {
+            std::fprintf(stderr, "forwardplus: renderer: %s\n", moe::Error::Get().c_str());
+            return false;
+        }
+
+        const moe::rhi::ShaderProgram* forward = ctx.mAssets.GetProgram(data->mForwardProgram);
+        data->mPcViewProj = data->mRenderer.GetPushConstant(*forward, "viewProj");
+        data->mPcCameraPos = data->mRenderer.GetPushConstant(*forward, "cameraPos");
+        data->mPcTileSize = data->mRenderer.GetPushConstant(*forward, "tileSize");
+        data->mPcMaxLights = data->mRenderer.GetPushConstant(*forward, "maxLightsPerTile");
+        data->mPcScreenWidth = data->mRenderer.GetPushConstant(*forward, "screenWidth");
+        data->mPcScreenHeight = data->mRenderer.GetPushConstant(*forward, "screenHeight");
+        data->mPcTileCountX = data->mRenderer.GetPushConstant(*forward, "tileCountX");
+        if (data->mPcViewProj < 0 || data->mPcCameraPos < 0 || data->mPcTileSize < 0
+                || data->mPcMaxLights < 0 || data->mPcScreenWidth < 0
+                || data->mPcScreenHeight < 0 || data->mPcTileCountX < 0) {
+            std::fprintf(stderr, "forwardplus: push constant names mismatch\n");
+            return false;
+        }
+
         data->mIm3d = &ctx.mIm3d;
-        data->mForwardPass.mIm3d = &ctx.mIm3d;
         ctx.mInput.BindAction(0, static_cast<int32_t>(moe::neo::KeyCode::kSpace));
-
-        const auto lightsId = data->mGraph.RegisterBuffer(data->mLights);
-        const auto countsId = data->mGraph.RegisterBuffer(data->mTileCounts);
-        const auto indicesId = data->mGraph.RegisterBuffer(data->mLightIndices);
-        const auto targetId = data->mGraph.RegisterImage(data->mColorTarget);
-        const auto depthId = data->mGraph.RegisterImage(data->mDepth);
-
-        {
-            moe::rhi::PassDesc desc{};
-            desc.mName = "cull";
-            desc.mPass = &data->mCullPass;
-            moe::rhi::ResourceAccess access{};
-            access.mResource = lightsId;
-            access.mIsWrite = false;
-            access.mStage = moe::rhi::PipelineStage::kComputeShader;
-            access.mAccess = moe::rhi::Access::kShaderRead;
-            desc.mReads.push_back(access);
-            access.mResource = countsId;
-            access.mIsWrite = true;
-            access.mStage = moe::rhi::PipelineStage::kComputeShader;
-            access.mAccess = moe::rhi::Access::kShaderWrite;
-            desc.mWrites.push_back(access);
-            access.mResource = indicesId;
-            access.mIsWrite = true;
-            access.mStage = moe::rhi::PipelineStage::kComputeShader;
-            access.mAccess = moe::rhi::Access::kShaderWrite;
-            desc.mWrites.push_back(access);
-            if (!data->mGraph.AddPass(desc)) {
-                std::fprintf(stderr, "forwardplus: add cull pass failed\n");
-                return false;
-            }
-        }
-        {
-            moe::rhi::PassDesc desc{};
-            desc.mName = "forward";
-            desc.mPass = &data->mForwardPass;
-            moe::rhi::ResourceAccess access{};
-            access.mResource = lightsId;
-            access.mIsWrite = false;
-            access.mStage = moe::rhi::PipelineStage::kFragmentShader;
-            access.mAccess = moe::rhi::Access::kShaderRead;
-            desc.mReads.push_back(access);
-            access.mResource = countsId;
-            access.mIsWrite = false;
-            access.mStage = moe::rhi::PipelineStage::kFragmentShader;
-            access.mAccess = moe::rhi::Access::kShaderRead;
-            desc.mReads.push_back(access);
-            access.mResource = indicesId;
-            access.mIsWrite = false;
-            access.mStage = moe::rhi::PipelineStage::kFragmentShader;
-            access.mAccess = moe::rhi::Access::kShaderRead;
-            desc.mReads.push_back(access);
-            access.mResource = targetId;
-            access.mIsWrite = true;
-            access.mStage = moe::rhi::PipelineStage::kColorAttachmentOutput;
-            access.mAccess = moe::rhi::Access::kColorAttachmentWrite;
-            access.mLayout = moe::rhi::ImageLayout::kColorAttachment;
-            desc.mWrites.push_back(access);
-            access.mResource = depthId;
-            access.mIsWrite = true;
-            access.mStage = moe::rhi::PipelineStage::kEarlyFragmentTests;
-            access.mAccess = moe::rhi::Access::kDepthStencilAttachmentWrite;
-            access.mLayout = moe::rhi::ImageLayout::kDepthStencilAttachment;
-            desc.mWrites.push_back(access);
-            if (!data->mGraph.AddPass(desc)) {
-                std::fprintf(stderr, "forwardplus: add forward pass failed\n");
-                return false;
-            }
-        }
-        std::string graphError;
-        if (!data->mGraph.Compile(graphError)) {
-            std::fprintf(stderr, "forwardplus: graph compile: %s\n", graphError.c_str());
-            return false;
-        }
 
         data->mCullPc.mScreenWidth = width;
         data->mCullPc.mScreenHeight = height;
         data->mCullPc.mTileSize = kTileSize;
         data->mCullPc.mMaxLightsPerTile = kMaxLightsPerTile;
-        data->mCullPc.mTileCountX = tilesX;
+        data->mCullPc.mTileCountX = data->mTilesX;
         data->mCullPc.mTileCount = tileCount;
         data->mCullPc.mLightCount = kLightCount;
         data->mCullPc.mTanHalfFov = std::tan(glm::radians(60.0f) * 0.5f);
@@ -437,7 +264,7 @@ namespace {
         data->mForwardPc.mMaxLightsPerTile = kMaxLightsPerTile;
         data->mForwardPc.mScreenWidth = width;
         data->mForwardPc.mScreenHeight = height;
-        data->mForwardPc.mTileCountX = tilesX;
+        data->mForwardPc.mTileCountX = data->mTilesX;
         return true;
     }
 
@@ -532,32 +359,59 @@ namespace {
         data->mForwardPc.mViewProj = data->mViewProj;
         data->mForwardPc.mCameraPos = data->mCameraPos;
 
-        if (!data->mGraph.Execute(cmd)) {
-            std::fprintf(stderr, "forwardplus: graph execute failed\n");
+        const float clear[4] = {0.02f, 0.02f, 0.03f, 1.0f};
+        if (!data->mFrame.Acquire(ctx.mSwapchain)) {
             return;
+        }
+        data->mRenderer.BeginFrame(cmd, data->mFrame, clear);
+
+        // Im3d vertex upload is a transfer: must be outside a render pass
+        if (data->mIm3d != nullptr && data->mIm3d->IsActive()) {
+            data->mIm3d->UploadVertices(cmd);
         }
 
-        // copy the offscreen color target into the swapchain image (the
-        // Swapchain manages the image's layout on both ends)
-        moe::rhi::Image swapImage;
-        if (!ctx.mSwapchain.GetCurrentImage(swapImage)) {
-            return;
-        }
+        // light culling (raw compute between passes)
+        cmd.BindDescriptorSet(data->mCullPipeline, data->mSet, 0);
+        cmd.SetPushConstants(data->mCullPipeline, 0, sizeof(CullPushConstants), &data->mCullPc);
+        cmd.Dispatch(data->mCullPipeline, data->mTilesX, data->mTilesY, 1);
+
+        // compute writes -> fragment reads (tile lists)
         moe::rhi::SyncInfo sync{};
-        sync.mSrcStage = moe::rhi::PipelineStage::kColorAttachmentOutput;
-        sync.mSrcAccess = moe::rhi::Access::kColorAttachmentWrite;
-        sync.mDstStage = moe::rhi::PipelineStage::kTransfer;
-        sync.mDstAccess = moe::rhi::Access::kTransferRead;
-        cmd.ImageBarrier(data->mColorTarget, moe::rhi::ImageLayout::kColorAttachment,
-                moe::rhi::ImageLayout::kTransferSrc, sync);
-        if (!ctx.mSwapchain.BeginTransfer(cmd)) {
-            swapImage.Destroy();
-            return;
-        }
-        cmd.CopyImage(data->mColorTarget, moe::rhi::ImageLayout::kTransferSrc,
-                swapImage, moe::rhi::ImageLayout::kTransferDst);
-        ctx.mSwapchain.EndTransfer(cmd);
-        swapImage.Destroy(); // borrowed wrapper: only drops the wrapper
+        sync.mSrcStage = moe::rhi::PipelineStage::kComputeShader;
+        sync.mSrcAccess = moe::rhi::Access::kShaderWrite;
+        sync.mDstStage = moe::rhi::PipelineStage::kFragmentShader;
+        sync.mDstAccess = moe::rhi::Access::kShaderRead;
+        data->mRenderer.MemoryBarrier(sync);
+
+        // forward pass: scene + Im3d gizmos
+        const moe::neo::PassDesc pass{"forward+", {}, {}};
+        data->mRenderer.Execute(pass, [&](moe::neo::PassContext& context) {
+            context.BindBuffer(0, data->mLights);
+            context.BindBuffer(1, data->mTileCounts);
+            context.BindBuffer(2, data->mLightIndices);
+            context.SetPushConstant(data->mPcViewProj, &data->mForwardPc.mViewProj,
+                    sizeof(glm::mat4));
+            context.SetPushConstant(data->mPcCameraPos, &data->mForwardPc.mCameraPos,
+                    sizeof(glm::vec3));
+            context.SetPushConstant(data->mPcTileSize, &data->mForwardPc.mTileSize, sizeof(float));
+            context.SetPushConstant(data->mPcMaxLights, &data->mForwardPc.mMaxLightsPerTile,
+                    sizeof(uint32_t));
+            context.SetPushConstant(data->mPcScreenWidth, &data->mForwardPc.mScreenWidth,
+                    sizeof(uint32_t));
+            context.SetPushConstant(data->mPcScreenHeight, &data->mForwardPc.mScreenHeight,
+                    sizeof(uint32_t));
+            context.SetPushConstant(data->mPcTileCountX, &data->mForwardPc.mTileCountX,
+                    sizeof(uint32_t));
+            context.Draw(data->mMesh, *ctx.mAssets.GetProgram(data->mForwardProgram));
+            // raw overlay last: it binds its own pipelines (the renderer's
+            // pipeline tracking resets at the next pass)
+            if (data->mIm3d != nullptr && data->mIm3d->IsActive()) {
+                data->mIm3d->Record(cmd);
+            }
+        });
+
+        data->mRenderer.EndFrame();
+        data->mFrame.Release();
     }
 
     void Shutdown(void* userdata, examples::AppContext&) {
@@ -566,9 +420,8 @@ namespace {
         data->mLightIndices.Destroy();
         data->mTileCounts.Destroy();
         data->mLights.Destroy();
-        data->mDepth.Destroy();
-        data->mColorTarget.Destroy();
         data->mMesh.Destroy();
+        data->mRenderer.Destroy();
     }
 }// namespace
 
@@ -582,9 +435,8 @@ int main() {
     callbacks.mUserdata = &data;
 
     examples::App app;
-    std::string error;
-    if (!app.Run("forward+ demo", 1280, 720, callbacks, error)) {
-        std::fprintf(stderr, "forwardplus: app: %s\n", error.c_str());
+    if (!app.Run("forward+ demo", 1280, 720, callbacks)) {
+        std::fprintf(stderr, "forwardplus: app: %s\n", moe::Error::Get().c_str());
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

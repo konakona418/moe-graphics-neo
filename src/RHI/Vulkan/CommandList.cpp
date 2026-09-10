@@ -125,7 +125,7 @@ namespace moe::rhi {
     }
 
     void CommandList::BeginRendering(const Image& color, const float clearColor[4],
-            const Image* depth, float depthClear, LoadOp colorLoadOp) {
+            const Image* depth, float depthClear, LoadOp colorLoadOp, LoadOp depthLoadOp) {
         VkRenderingAttachmentInfo colorAttachment{};
         colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         colorAttachment.imageView = color.mImpl->mView;
@@ -141,7 +141,8 @@ namespace moe::rhi {
             depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
             depthAttachment.imageView = depth->mImpl->mView;
             depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            depthAttachment.loadOp = depthLoadOp == LoadOp::kClear
+                    ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
             depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             depthAttachment.clearValue.depthStencil = {depthClear, 0};
         }

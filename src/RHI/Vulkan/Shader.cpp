@@ -2,6 +2,7 @@
 
 #include <spirv_reflect.h>
 
+#include "Core/Error.hpp"
 #include "Core/FileIo.hpp"
 #include "Core/Logger.hpp"
 #include "RhiAssert.hpp"
@@ -58,7 +59,7 @@ namespace moe::rhi {
 
     bool Shader::Load(const char* spvPath, ShaderStage stage) {
         std::vector<uint8_t> bytes;
-        if (!moe::ReadFileBytes(spvPath, bytes, mImpl->mLastError)) {
+        if (!moe::ReadFileBytes(spvPath, bytes)) {
             return false;
         }
         mImpl->mCode.assign(bytes.begin(), bytes.end());
@@ -68,8 +69,7 @@ namespace moe::rhi {
 
         SpvReflectShaderModule module{};
         if (spvReflectCreateShaderModule(mImpl->mCode.size(), mImpl->mCode.data(), &module) != SPV_REFLECT_RESULT_SUCCESS) {
-            mImpl->mLastError = std::string("SPIRV-Reflect failed to parse: ") + spvPath;
-            return false;
+            return moe::Fail(std::string("SPIRV-Reflect failed to parse: ") + spvPath);
         }
 
         ShaderReflection reflection;
@@ -83,6 +83,7 @@ namespace moe::rhi {
                         binding->binding,
                         ToDescriptorType(binding->descriptor_type),
                         binding->count,
+                        binding->name != nullptr ? binding->name : "",
                 });
             }
         }
@@ -112,25 +113,19 @@ namespace moe::rhi {
         spvReflectDestroyShaderModule(&module);
 
         mImpl->mReflection = std::move(reflection);
-        mImpl->mLastError.clear();
         moe::Logger::info("RHI shader loaded: {} ({} bytes)", spvPath, mImpl->mCode.size());
         return true;
     }
 
     bool Shader::Reload() {
         if (mImpl->mPath.empty()) {
-            mImpl->mLastError = "Shader has no path to reload";
-            return false;
+            return moe::Fail("Shader has no path to reload");
         }
         return Load(mImpl->mPath.c_str(), mImpl->mStage);
     }
 
     const std::string& Shader::GetPath() const {
         return mImpl->mPath;
-    }
-
-    const std::string& Shader::GetLastError() const {
-        return mImpl->mLastError;
     }
 
     ShaderStage Shader::GetStage() const {

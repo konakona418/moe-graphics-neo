@@ -1,6 +1,8 @@
 add_library(moe-neo STATIC
   Animation.cpp
+  Assets.cpp
   Audio.cpp
+  Content.cpp
   Importer.cpp
   Input.cpp
   OggProvider.cpp

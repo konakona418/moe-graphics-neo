@@ -1,5 +1,6 @@
 #include "RHI/RenderGraph.hpp"
 
+#include "Core/Error.hpp"
 #include "RHI/Buffer.hpp"
 #include "RHI/CommandList.hpp"
 #include "RHI/Image.hpp"
@@ -82,7 +83,7 @@ namespace moe::rhi {
         return true;
     }
 
-    bool RenderGraph::Compile(std::string& error) {
+    bool RenderGraph::Compile() {
         const uint32_t passCount = static_cast<uint32_t>(mImpl->mPasses.size());
 
         // ---- topological sort ----
@@ -151,7 +152,7 @@ namespace moe::rhi {
             }
         }
         if (order.size() != passCount) {
-            error = "RenderGraph: dependency cycle detected";
+            moe::Error::Set("RenderGraph: dependency cycle detected");
             return false;
         }
 

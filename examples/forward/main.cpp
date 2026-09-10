@@ -1,5 +1,6 @@
 #include <examples/common/App.hpp>
 
+#include <Core/Error.hpp>
 #include <Neo/Renderer.hpp>
 #include <Neo/SwapchainImage.hpp>
 #include <Neo/Uploader.hpp>
@@ -65,15 +66,14 @@ namespace {
 
     bool Setup(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<ForwardData*>(userdata);
-        std::string error;
 
-        if (!data->mUploader.Init(ctx.mDevice, error)) {
-            std::fprintf(stderr, "forward: uploader init: %s\n", error.c_str());
+        if (!data->mUploader.Init(ctx.mDevice)) {
+            std::fprintf(stderr, "forward: uploader init: %s\n", moe::Error::Get().c_str());
             return false;
         }
         moe::neo::Mesh box = MakeBoxMesh();
-        if (!data->mUploader.UploadMesh(box, data->mMesh, error)) {
-            std::fprintf(stderr, "forward: upload: %s\n", error.c_str());
+        if (!data->mUploader.UploadMesh(box, data->mMesh)) {
+            std::fprintf(stderr, "forward: upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -88,8 +88,8 @@ namespace {
         }
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), error)) {
-            std::fprintf(stderr, "forward: renderer: %s\n", error.c_str());
+                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight())) {
+            std::fprintf(stderr, "forward: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }
         // push constant names are chosen freely; look up once here
@@ -125,7 +125,7 @@ namespace {
         }
         data->mRenderer.BeginFrame(cmd, data->mFrame, clear);
 
-        const moe::neo::PassDesc mainPass{"forward", {}, moe::rhi::LoadOp::kClear};
+        const moe::neo::PassDesc mainPass{"forward", {}, {}};
         data->mRenderer.Execute(mainPass, [&](moe::neo::PassContext& pass) {
             pass.SetPushConstant(data->mMvpIndex, &mvp, sizeof(mvp));
             pass.SetPushConstant(data->mModelIndex, &model, sizeof(model));
@@ -163,9 +163,8 @@ int main() {
     callbacks.mUserdata = &data;
 
     examples::App app;
-    std::string error;
-    if (!app.Run("forward demo", 1280, 720, callbacks, error)) {
-        std::fprintf(stderr, "forward: app: %s\n", error.c_str());
+    if (!app.Run("forward demo", 1280, 720, callbacks)) {
+        std::fprintf(stderr, "forward: app: %s\n", moe::Error::Get().c_str());
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

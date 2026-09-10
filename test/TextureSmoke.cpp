@@ -56,7 +56,6 @@ int main() {
     CHECK(pixel(2, 3) == 0xFF00FF00u); // green
 
     // ---- upload ----
-    std::string error;
     moe::rhi::Device device;
     moe::rhi::DefaultPipelineCache cache;
     moe::rhi::DeviceCreateInfo deviceInfo{};
@@ -65,10 +64,10 @@ int main() {
     CHECK(moe::rhi::Device::Create(deviceInfo, device));
 
     moe::neo::Uploader uploader;
-    CHECK(uploader.Init(device, error));
+    CHECK(uploader.Init(device));
 
     moe::neo::UploadedTexture gpu;
-    CHECK(uploader.UploadTexture(texture, gpu, error));
+    CHECK(uploader.UploadTexture(texture, gpu));
 
     // ---- readback ----
     moe::rhi::BufferCreateInfo readbackInfo{};

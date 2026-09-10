@@ -1,6 +1,7 @@
 #include "RHI/Swapchain.hpp"
 
 #include "RHI/CommandList.hpp"
+#include "RHI/Image.hpp"
 #include "Mappings.hpp"
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
@@ -47,7 +48,8 @@ namespace moe::rhi {
         return false;
     }
 
-    bool Swapchain::BeginRendering(CommandList& cmd, const float clearColor[4], LoadOp loadOp) {
+    bool Swapchain::BeginRendering(CommandList& cmd, const float clearColor[4], LoadOp loadOp,
+            const Image* depthImage, float depthClear, LoadOp depthLoadOp) {
         if (mImpl == nullptr || mImpl->mCurrentImage >= mImpl->mImages.size()) {
             return false;
         }
@@ -76,12 +78,24 @@ namespace moe::rhi {
         colorAttachment.clearValue.color = {
                 {clearColor[0], clearColor[1], clearColor[2], clearColor[3]}};
 
+        VkRenderingAttachmentInfo depthAttachment{};
+        if (depthImage != nullptr) {
+            depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            depthAttachment.imageView = depthImage->mImpl->mView;
+            depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthAttachment.loadOp = depthLoadOp == LoadOp::kClear
+                    ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+            depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            depthAttachment.clearValue.depthStencil = {depthClear, 0};
+        }
+
         VkRenderingInfo renderingInfo{};
         renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
         renderingInfo.renderArea = {{0, 0}, {mImpl->mWidth, mImpl->mHeight}};
         renderingInfo.layerCount = 1;
         renderingInfo.colorAttachmentCount = 1;
         renderingInfo.pColorAttachments = &colorAttachment;
+        renderingInfo.pDepthAttachment = depthImage != nullptr ? &depthAttachment : nullptr;
         vkCmdBeginRendering(cmd.mImpl->mCommandBuffer, &renderingInfo);
         return true;
     }

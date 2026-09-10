@@ -58,9 +58,9 @@ namespace moe::rhi {
 
         bool AddPass(const PassDesc& desc);
 
-        // Topologically sorts passes and plans barriers. Returns false with an
-        // error message on cycles or invalid references.
-        bool Compile(std::string& error);
+        // Topologically sorts passes and plans barriers. Returns false and
+        // records the reason in moe::Error on cycles or invalid references.
+        bool Compile();
 
         // Records the planned barriers and each pass's Execute in order.
         bool Execute(CommandList& cmd);
