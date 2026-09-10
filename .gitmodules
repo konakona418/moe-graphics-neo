@@ -1,0 +1,60 @@
+[submodule "vendors/vk-bootstrap"]
+	path = vendors/vk-bootstrap
+	url = https://github.com/charles-lunarg/vk-bootstrap.git
+[submodule "vendors/VulkanMemoryAllocator"]
+	path = vendors/VulkanMemoryAllocator
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "vendors/glm"]
+	path = vendors/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "vendors/glfw"]
+	path = vendors/glfw
+	url = https://github.com/glfw/glfw
+[submodule "vendors/Vulkan-Headers"]
+	path = vendors/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "vendors/spdlog"]
+	path = vendors/spdlog
+	url = https://github.com/gabime/spdlog.git
+[submodule "vendors/volk"]
+	path = vendors/volk
+	url = https://github.com/zeux/volk.git
+[submodule "vendors/fmt"]
+	path = vendors/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "vendors/span"]
+	path = vendors/span
+	url = https://github.com/tcbrindle/span.git
+[submodule "vendors/imgui"]
+	path = vendors/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "vendors/stb"]
+	path = vendors/stb
+	url = https://github.com/nothings/stb.git
+[submodule "vendors/JoltPhysics"]
+	path = vendors/JoltPhysics
+	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "vendors/im3d"]
+	path = vendors/im3d
+	url = https://github.com/john-chapman/im3d.git
+[submodule "vendors/openal-soft"]
+	path = vendors/openal-soft
+	url = https://github.com/kcat/openal-soft.git
+[submodule "vendors/Catch2"]
+	path = vendors/Catch2
+	url = https://github.com/catchorg/Catch2.git
+[submodule "vendors/ogg"]
+	path = vendors/ogg
+	url = https://github.com/xiph/ogg.git
+[submodule "vendors/vorbis"]
+	path = vendors/vorbis
+	url = https://github.com/xiph/vorbis.git
+[submodule "vendors/mimalloc"]
+	path = vendors/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
+[submodule "vendors/SPIRV-Reflect"]
+	path = vendors/SPIRV-Reflect
+	url = https://github.com/KhronosGroup/SPIRV-Reflect.git
+[submodule "vendors/fastgltf"]
+	path = vendors/fastgltf
+	url = https://github.com/spnda/fastgltf.git

@@ -1,0 +1,7 @@
+{
+    "include_dirs": [
+        "./",
+        "./im3d"
+    ],
+    "output_dir": ".."
+}

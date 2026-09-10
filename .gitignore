@@ -1,0 +1,28 @@
+/.vscode
+/build
+*.spv
+/CMakePresets.json
+/out
+
+/shaders/slang/*.glsl
+
+/shaders/**/*.bat
+/shaders/**/*.cmd
+/shaders/**/*.ps1
+/shaders/**/*.sh
+/shaders/**/build
+
+/game/FlatBuffers/Generated
+/game/FlatBuffers/.fbs_cache.json
+
+# gemini-cli settings
+.gemini/
+
+# GitHub App credentials
+gha-creds-*.json
+
+# runtime-generated
+/imgui.ini
+/shaders/.shader_cached.json
+
+/PLAN.md
