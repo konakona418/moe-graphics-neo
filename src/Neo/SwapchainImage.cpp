@@ -46,4 +46,8 @@ namespace moe::neo {
     uint32_t SwapchainImage::GetHeight() const {
         return mHeight;
     }
+
+    rhi::Swapchain& SwapchainImage::GetSwapchain() const {
+        return *mSwapchain;
+    }
 }// namespace moe::neo

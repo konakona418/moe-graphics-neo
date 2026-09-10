@@ -88,6 +88,9 @@ namespace moe::neo {
         // object, valid from BeginFrame to EndFrame (both inside the same App
         // callback scope).
         const rhi::Image* mSwapchainImage{nullptr};
+        // Owning swapchain of the current frame; its BeginRendering /
+        // EndRendering pair manages the swapchain image's layout state.
+        rhi::Swapchain* mSwapchain{nullptr};
         rhi::Format mSwapchainFormat{rhi::Format::kUndefined};
         uint32_t mFrameWidth{0};
         uint32_t mFrameHeight{0};
@@ -99,8 +102,6 @@ namespace moe::neo {
         const char* mPassName{nullptr};
         RenderTarget* mCurrentTarget{nullptr};
         uint64_t mCurrentPipelineHash{0};
-        bool mSwapchainReady{false}; // PresentSrc -> ColorAttachment done
-        bool mSwapchainDrawn{false};
 
         Cache<RenderTarget> mTargets;
 
@@ -281,6 +282,7 @@ namespace moe::neo {
         mImpl->mFrameSets.clear();
         mImpl->mCmd = &cmd;
         mImpl->mSwapchainImage = &frame.GetImage();
+        mImpl->mSwapchain = &frame.GetSwapchain();
         mImpl->mSwapchainFormat = frame.GetFormat();
         mImpl->mFrameWidth = frame.GetWidth();
         mImpl->mFrameHeight = frame.GetHeight();
@@ -295,28 +297,19 @@ namespace moe::neo {
         mImpl->mPassName = nullptr;
         mImpl->mCurrentTarget = nullptr;
         mImpl->mCurrentPipelineHash = 0;
-        mImpl->mSwapchainReady = false;
-        mImpl->mSwapchainDrawn = false;
     }
 
     void Renderer::EndFrame() {
         Impl& impl = *mImpl;
-        rhi::CommandList& cmd = *impl.mCmd;
 
         if (impl.mPassOpen) {
             moe::Logger::warn("Renderer: pass '{}' left open at EndFrame; closing it", impl.mPassName);
-            cmd.EndRendering();
+            if (impl.mCurrentTarget == nullptr) {
+                impl.mSwapchain->EndRendering(*impl.mCmd);
+            } else {
+                impl.mCmd->EndRendering();
+            }
             impl.mPassOpen = false;
-        }
-
-        if (impl.mSwapchainDrawn) {
-            rhi::SyncInfo sync{};
-            sync.mSrcStage = rhi::PipelineStage::kColorAttachmentOutput;
-            sync.mSrcAccess = rhi::Access::kColorAttachmentWrite;
-            sync.mDstStage = rhi::PipelineStage::kBottomOfPipe;
-            sync.mDstAccess = rhi::Access::kNone;
-            cmd.ImageBarrier(*impl.mSwapchainImage, rhi::ImageLayout::kColorAttachment,
-                    rhi::ImageLayout::kPresentSrc, sync);
         }
 
         // per-second stats (avoids log flooding while keeping visibility)
@@ -558,17 +551,8 @@ namespace moe::neo {
                     1.0f, desc.mLoadOp);
             cmd.SetViewport(target->mWidth, target->mHeight);
         } else {
-            // swapchain: PresentSrc -> ColorAttachment (first use this frame)
-            if (!impl.mSwapchainReady) {
-                sync.mSrcStage = rhi::PipelineStage::kBottomOfPipe;
-                sync.mSrcAccess = rhi::Access::kNone;
-                sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
-                sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
-                cmd.ImageBarrier(*impl.mSwapchainImage, rhi::ImageLayout::kPresentSrc,
-                        rhi::ImageLayout::kColorAttachment, sync);
-                impl.mSwapchainReady = true;
-            }
             // main depth: first frame transitions undefined -> depth attachment
+            // (pass-external, must precede BeginRendering)
             if (!impl.mDepthReady) {
                 sync.mSrcStage = rhi::PipelineStage::kTopOfPipe;
                 sync.mSrcAccess = rhi::Access::kNone;
@@ -578,14 +562,12 @@ namespace moe::neo {
                         rhi::ImageLayout::kDepthStencilAttachment, sync);
                 impl.mDepthReady = true;
             }
-            cmd.BeginRendering(*impl.mSwapchainImage, impl.mClearColor,
-                    &impl.mDepthImage, 1.0f, desc.mLoadOp);
+            // swapchain: the Swapchain owns its layout state; this call
+            // transitions from whatever it currently is to ColorAttachment.
+            impl.mSwapchain->BeginRendering(cmd, impl.mClearColor, desc.mLoadOp);
             cmd.SetViewport(impl.mFrameWidth, impl.mFrameHeight);
-            impl.mSwapchainDrawn = true;
         }
         impl.mPassOpen = true;
-        moe::Logger::debug("Renderer pass '{}' begin ({})",
-                impl.mPassName, target != nullptr ? "render target" : "swapchain");
     }
 
     void Renderer::EndPass(const PassDesc& desc) {
@@ -594,9 +576,16 @@ namespace moe::neo {
             impl.mLastError = "EndPass: no active pass";
             return;
         }
-        impl.mCmd->EndRendering();
         impl.mPassOpen = false;
-        moe::Logger::debug("Renderer pass '{}' end", impl.mPassName);
+
+        if (impl.mCurrentTarget == nullptr) {
+            // swapchain pass: Swapchain::EndRendering ends the pass and moves
+            // the image to PresentSrc (tracked by the swapchain).
+            impl.mSwapchain->EndRendering(*impl.mCmd);
+            return;
+        }
+
+        impl.mCmd->EndRendering();
 
         // Deferred sampling transition (vulkan 1.3 dynamic rendering forbids
         // pipeline barriers inside a render pass): immediately after the pass,
@@ -604,7 +593,7 @@ namespace moe::neo {
         // to their read layouts, so later passes can sample them without any
         // barrier. The next pass that draws to it transitions it back in
         // BeginPass.
-        if (impl.mCurrentTarget != nullptr) {
+        {
             RenderTarget* target = impl.mCurrentTarget;
             rhi::CommandList& cmd = *impl.mCmd;
             rhi::SyncInfo sync{};

@@ -537,8 +537,8 @@ namespace {
             return;
         }
 
-        // copy the offscreen color target into the swapchain image (currently in
-        // PresentSrc layout from App's EndRendering)
+        // copy the offscreen color target into the swapchain image (the
+        // Swapchain manages the image's layout on both ends)
         moe::rhi::Image swapImage;
         if (!ctx.mSwapchain.GetCurrentImage(swapImage)) {
             return;
@@ -550,20 +550,13 @@ namespace {
         sync.mDstAccess = moe::rhi::Access::kTransferRead;
         cmd.ImageBarrier(data->mColorTarget, moe::rhi::ImageLayout::kColorAttachment,
                 moe::rhi::ImageLayout::kTransferSrc, sync);
-        sync.mSrcStage = moe::rhi::PipelineStage::kBottomOfPipe;
-        sync.mSrcAccess = moe::rhi::Access::kNone;
-        sync.mDstStage = moe::rhi::PipelineStage::kTransfer;
-        sync.mDstAccess = moe::rhi::Access::kTransferWrite;
-        cmd.ImageBarrier(swapImage, moe::rhi::ImageLayout::kPresentSrc,
-                moe::rhi::ImageLayout::kTransferDst, sync);
+        if (!ctx.mSwapchain.BeginTransfer(cmd)) {
+            swapImage.Destroy();
+            return;
+        }
         cmd.CopyImage(data->mColorTarget, moe::rhi::ImageLayout::kTransferSrc,
                 swapImage, moe::rhi::ImageLayout::kTransferDst);
-        sync.mSrcStage = moe::rhi::PipelineStage::kTransfer;
-        sync.mSrcAccess = moe::rhi::Access::kTransferWrite;
-        sync.mDstStage = moe::rhi::PipelineStage::kBottomOfPipe;
-        sync.mDstAccess = moe::rhi::Access::kNone;
-        cmd.ImageBarrier(swapImage, moe::rhi::ImageLayout::kTransferDst,
-                moe::rhi::ImageLayout::kPresentSrc, sync);
+        ctx.mSwapchain.EndTransfer(cmd);
         swapImage.Destroy(); // borrowed wrapper: only drops the wrapper
     }
 

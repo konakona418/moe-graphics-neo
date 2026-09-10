@@ -2,8 +2,7 @@
 
 #include <spirv_reflect.h>
 
-#include <fstream>
-
+#include "Core/FileIo.hpp"
 #include "Core/Logger.hpp"
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
@@ -58,15 +57,11 @@ namespace moe::rhi {
     Shader::~Shader() = default;
 
     bool Shader::Load(const char* spvPath, ShaderStage stage) {
-        std::ifstream file(spvPath, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            mImpl->mLastError = std::string("Failed to open shader file: ") + spvPath;
+        std::vector<uint8_t> bytes;
+        if (!moe::ReadFileBytes(spvPath, bytes, mImpl->mLastError)) {
             return false;
         }
-        const size_t fileSize = static_cast<size_t>(file.tellg());
-        mImpl->mCode.resize(fileSize);
-        file.seekg(0);
-        file.read(mImpl->mCode.data(), static_cast<std::streamsize>(fileSize));
+        mImpl->mCode.assign(bytes.begin(), bytes.end());
         mImpl->mPath = spvPath;
         mImpl->mStage = stage;
         mImpl->mContentHash = HashBytes(mImpl->mCode.data(), mImpl->mCode.size());

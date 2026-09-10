@@ -28,10 +28,20 @@ namespace moe::rhi {
         // Waits for the in-flight frame and acquires the next image.
         bool AcquireImage();
 
-        // Begins dynamic rendering into the current image (cleared to
-        // clearColor). Record draws between BeginRendering and EndRendering.
-        bool BeginRendering(CommandList& cmd, const float clearColor[4]);
+        // Begins dynamic rendering into the current image, transitioning it
+        // from whatever layout it currently has (Undefined after acquire,
+        // PresentSrc after a previous EndRendering) to ColorAttachment.
+        // loadOp kClear clears to clearColor, kLoad keeps the contents.
+        // Record draws between BeginRendering and EndRendering.
+        bool BeginRendering(CommandList& cmd, const float clearColor[4],
+                LoadOp loadOp = LoadOp::kClear);
         void EndRendering(CommandList& cmd);
+
+        // Transfer path: transitions the current image to TransferDst (for a
+        // CopyImage/BlitImage into it), then back to PresentSrc. Layout
+        // bookkeeping stays with the swapchain either way.
+        bool BeginTransfer(CommandList& cmd);
+        void EndTransfer(CommandList& cmd);
 
         // Submits the recorded command list (waiting on image availability,
         // signaling render completion) and presents the current image.

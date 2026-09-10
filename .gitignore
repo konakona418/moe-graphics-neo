@@ -26,3 +26,6 @@ gha-creds-*.json
 /shaders/.shader_cached.json
 
 /PLAN.md
+
+# runtime log
+/engine.log

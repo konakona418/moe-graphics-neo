@@ -96,42 +96,28 @@ namespace examples {
             }
 
             mCommandList.Begin();
-            mSwapchain.BeginRendering(mCommandList, clear);
+            // The legacy per-frame clear pass only exists for demos that draw
+            // in mRender; renderer-based demos skip it (their own passes own
+            // the swapchain image layout, and Swapchain tracks it).
             if (callbacks.mRender != nullptr) {
+                mSwapchain.BeginRendering(mCommandList, clear);
                 callbacks.mRender(callbacks.mUserdata, ctx, mCommandList);
+                mSwapchain.EndRendering(mCommandList);
             }
-            mSwapchain.EndRendering(mCommandList);
             if (callbacks.mPostRender != nullptr) {
                 callbacks.mPostRender(callbacks.mUserdata, ctx, mCommandList);
             }
 
             // ImGui: new frame, record windows, composite over the swapchain
-            // (currently in PresentSrc) in its own render pass.
+            // (in its own pass; the Swapchain tracks the image layout).
             if (mUiActive) {
                 mDebugUI.BeginFrame(deltaSeconds);
                 if (callbacks.mDrawUI != nullptr) {
                     callbacks.mDrawUI(callbacks.mUserdata, ctx);
                 }
-                moe::rhi::Image swapImage;
-                if (mSwapchain.GetCurrentImage(swapImage)) {
-                    moe::rhi::SyncInfo uiSync{};
-                    uiSync.mSrcStage = moe::rhi::PipelineStage::kBottomOfPipe;
-                    uiSync.mSrcAccess = moe::rhi::Access::kNone;
-                    uiSync.mDstStage = moe::rhi::PipelineStage::kColorAttachmentOutput;
-                    uiSync.mDstAccess = moe::rhi::Access::kColorAttachmentWrite;
-                    mCommandList.ImageBarrier(swapImage, moe::rhi::ImageLayout::kPresentSrc,
-                            moe::rhi::ImageLayout::kColorAttachment, uiSync);
-                    mCommandList.BeginRendering(swapImage, clear, nullptr, 1.0f,
-                            moe::rhi::LoadOp::kLoad);
+                if (mSwapchain.BeginRendering(mCommandList, clear, moe::rhi::LoadOp::kLoad)) {
                     mDebugUI.Render(mCommandList);
-                    mCommandList.EndRendering();
-                    uiSync.mSrcStage = moe::rhi::PipelineStage::kColorAttachmentOutput;
-                    uiSync.mSrcAccess = moe::rhi::Access::kColorAttachmentWrite;
-                    uiSync.mDstStage = moe::rhi::PipelineStage::kBottomOfPipe;
-                    uiSync.mDstAccess = moe::rhi::Access::kNone;
-                    mCommandList.ImageBarrier(swapImage, moe::rhi::ImageLayout::kColorAttachment,
-                            moe::rhi::ImageLayout::kPresentSrc, uiSync);
-                    swapImage.Destroy(); // borrowed wrapper: only drops the wrapper
+                    mSwapchain.EndRendering(mCommandList);
                 }
             }
 

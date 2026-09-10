@@ -28,20 +28,20 @@ if(TARGET moe-shaders)
     add_dependencies(moe-example-forward moe-shaders)
 endif()
 
-add_executable(moe-example-postfx
-  postfx/main.cpp
+add_executable(moe-example-grass
+  grass/main.cpp
 )
 
-target_link_libraries(moe-example-postfx PRIVATE
+target_link_libraries(moe-example-grass PRIVATE
   moe-example-common
 )
 
-target_compile_definitions(moe-example-postfx PRIVATE
+target_compile_definitions(moe-example-grass PRIVATE
   MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 
 if(TARGET moe-shaders)
-    add_dependencies(moe-example-postfx moe-shaders)
+    add_dependencies(moe-example-grass moe-shaders)
 endif()
 
 add_executable(moe-example-clouds

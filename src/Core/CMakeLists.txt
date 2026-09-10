@@ -1,4 +1,5 @@
 add_library(moe-core STATIC
+  FileIo.cpp
   Logger.cpp
 )
 

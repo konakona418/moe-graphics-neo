@@ -221,11 +221,7 @@ namespace moe::rhi {
 
     void CommandList::MemoryBarrier(const SyncInfo& sync) {
         VkMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
-        barrier.srcStageMask = ToVkPipelineStage(sync.mSrcStage);
-        barrier.srcAccessMask = ToVkAccess(sync.mSrcAccess);
-        barrier.dstStageMask = ToVkPipelineStage(sync.mDstStage);
-        barrier.dstAccessMask = ToVkAccess(sync.mDstAccess);
+        FillSync(barrier, sync);
 
         VkDependencyInfo dependency{};
         dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
@@ -236,11 +232,7 @@ namespace moe::rhi {
 
     void CommandList::BufferBarrier(const Buffer& buffer, const SyncInfo& sync) {
         VkBufferMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
-        barrier.srcStageMask = ToVkPipelineStage(sync.mSrcStage);
-        barrier.srcAccessMask = ToVkAccess(sync.mSrcAccess);
-        barrier.dstStageMask = ToVkPipelineStage(sync.mDstStage);
-        barrier.dstAccessMask = ToVkAccess(sync.mDstAccess);
+        FillSync(barrier, sync);
         barrier.buffer = buffer.mImpl->mBuffer;
         barrier.offset = 0;
         barrier.size = VK_WHOLE_SIZE;
@@ -254,29 +246,10 @@ namespace moe::rhi {
 
     void CommandList::ImageBarrier(const Image& image, ImageLayout srcLayout, ImageLayout dstLayout,
             const SyncInfo& sync) {
-        VkImageMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        barrier.srcStageMask = ToVkPipelineStage(sync.mSrcStage);
-        barrier.srcAccessMask = ToVkAccess(sync.mSrcAccess);
-        barrier.dstStageMask = ToVkPipelineStage(sync.mDstStage);
-        barrier.dstAccessMask = ToVkAccess(sync.mDstAccess);
-        barrier.oldLayout = ToVkImageLayout(srcLayout);
-        barrier.newLayout = ToVkImageLayout(dstLayout);
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = image.mImpl->mImage;
-        barrier.subresourceRange.aspectMask = image.mImpl->mFormat == Format::kD32Float
+        const VkImageAspectFlags aspect = image.mImpl->mFormat == Format::kD32Float
                 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = image.mImpl->mMipLevels;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = image.mImpl->mType == ImageType::kCube
-                ? 6 : image.mImpl->mLayerCount;
-
-        VkDependencyInfo dependency{};
-        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency.imageMemoryBarrierCount = 1;
-        dependency.pImageMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(mImpl->mCommandBuffer, &dependency);
+        const uint32_t layers = image.mImpl->mType == ImageType::kCube ? 6 : image.mImpl->mLayerCount;
+        RecordImageBarrier(mImpl->mCommandBuffer, image.mImpl->mImage, aspect,
+                image.mImpl->mMipLevels, layers, srcLayout, dstLayout, sync);
     }
 }// namespace moe::rhi

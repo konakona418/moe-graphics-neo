@@ -83,6 +83,12 @@ namespace moe::neo {
                 rhi::Buffer& out, std::string& error);
 
     private:
+        // Shared staging plumbing: a host-visible transfer-source buffer, and
+        // staging->buffer copy + barrier + submit.
+        bool CreateStagingBuffer(size_t size, rhi::Buffer& out, std::string& error);
+        bool UploadBytes(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
+                bool waitForCompletion, std::string& error);
+
         rhi::Device* mDevice{nullptr};
     };
 }// namespace moe::neo

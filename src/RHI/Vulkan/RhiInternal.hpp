@@ -177,6 +177,10 @@ namespace moe::rhi {
         uint32_t mWidth{0};
         uint32_t mHeight{0};
         Format mFormat{Format::kR8G8B8A8Unorm};
+        // The swapchain owns its image's layout state: BeginRendering /
+        // EndRendering keep it in sync so callers never hand-write the
+        // PresentSrc <-> ColorAttachment transitions.
+        ImageLayout mCurrentLayout{ImageLayout::kUndefined};
         DeviceImpl* mDevice{nullptr};
     };
 }// namespace moe::rhi

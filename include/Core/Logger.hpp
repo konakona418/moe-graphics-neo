@@ -38,8 +38,8 @@ namespace moe {
 
     private:
         std::string_view getThreadName() const {
-            auto it = m_threadNames.find(std::this_thread::get_id());
-            if (it != m_threadNames.end()) return it->second;
+            auto it = mThreadNames.find(std::this_thread::get_id());
+            if (it != mThreadNames.end()) return it->second;
             return "Unknown";
         }
 
@@ -47,12 +47,12 @@ namespace moe {
         void log(spdlog::level::level_enum lvl, const char* fmt, Args&&... args) {
             auto threadName = getThreadName();
             auto output = fmt::format(fmt::runtime(fmt), std::forward<Args>(args)...);
-            if (m_logger) m_logger->log(lvl, "[{}] {}", threadName, output);
+            if (mLogger) mLogger->log(lvl, "[{}] {}", threadName, output);
         }
 
-        std::unordered_map<std::thread::id, std::string> m_threadNames;
+        std::unordered_map<std::thread::id, std::string> mThreadNames;
 
-        std::shared_ptr<spdlog::logger> m_logger;
-        static std::shared_ptr<Logger> m_instance;
+        std::shared_ptr<spdlog::logger> mLogger;
+        static std::shared_ptr<Logger> mInstance;
     };
 }// namespace moe

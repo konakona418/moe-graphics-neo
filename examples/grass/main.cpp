@@ -166,7 +166,7 @@ namespace {
         const glm::vec2 uvs[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
 
         moe::neo::Mesh mesh;
-        mesh.mName = "postfx_box";
+        mesh.mName = "grass_box";
         moe::neo::MeshPrimitive prim;
         for (int face = 0; face < 6; ++face) {
             for (int i = 0; i < 4; ++i) {
@@ -189,7 +189,7 @@ namespace {
 
     moe::neo::Mesh MakeGrassMesh() {
         moe::neo::Mesh mesh;
-        mesh.mName = "postfx_grass";
+        mesh.mName = "grass_blade";
         moe::neo::MeshPrimitive prim;
         // a single blade: wide base at the ground, tip up top
         prim.mPositions.push_back(glm::vec3(-0.03f, 0.0f, 0.0f));
@@ -204,7 +204,7 @@ namespace {
 
     moe::neo::Mesh MakeGroundMesh() {
         moe::neo::Mesh mesh;
-        mesh.mName = "postfx_ground";
+        mesh.mName = "grass_ground";
         moe::neo::MeshPrimitive prim;
         // a single large quad (20x20), repeating uv 0..20 for grid lines
         const float half = 10.0f;
@@ -227,7 +227,7 @@ namespace {
 
     moe::neo::Texture MakeCheckerTexture() {
         moe::neo::Texture texture;
-        texture.mName = "postfx_checker";
+        texture.mName = "grass_checker";
         texture.mWidth = 16;
         texture.mHeight = 16;
         texture.mDepth = 1;
@@ -253,18 +253,18 @@ namespace {
         std::string error;
 
         if (!data->mUploader.Init(ctx.mDevice, error)) {
-            std::fprintf(stderr, "postfx: uploader: %s\n", error.c_str());
+            std::fprintf(stderr, "grass: uploader: %s\n", error.c_str());
             return false;
         }
 
         if (!data->mUploader.UploadMesh(MakeBoxMesh(), data->mBoxMesh, error)
                 || !data->mUploader.UploadMesh(MakeGrassMesh(), data->mGrassMesh, error)
                 || !data->mUploader.UploadMesh(MakeGroundMesh(), data->mGroundMesh, error)) {
-            std::fprintf(stderr, "postfx: mesh upload: %s\n", error.c_str());
+            std::fprintf(stderr, "grass: mesh upload: %s\n", error.c_str());
             return false;
         }
         if (!data->mUploader.UploadTexture(MakeCheckerTexture(), data->mBoxTexture, error)) {
-            std::fprintf(stderr, "postfx: texture upload: %s\n", error.c_str());
+            std::fprintf(stderr, "grass: texture upload: %s\n", error.c_str());
             return false;
         }
 
@@ -283,55 +283,55 @@ namespace {
         if (!data->mUploader.UploadData(reinterpret_cast<const uint8_t*>(instances.data()),
                 instances.size() * sizeof(glm::mat4), moe::rhi::BufferUsage::kVertex,
                 data->mInstanceBuffer, error)) {
-            std::fprintf(stderr, "postfx: instance upload: %s\n", error.c_str());
+            std::fprintf(stderr, "grass: instance upload: %s\n", error.c_str());
             return false;
         }
 
         const char* shaderDir = MOE_SOURCE_DIR "/shaders/examples/";
-        if (!data->mSceneVert.Load((std::string(shaderDir) + "postfx_scene.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
-                || !data->mSceneFrag.Load((std::string(shaderDir) + "postfx_scene.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
+        if (!data->mSceneVert.Load((std::string(shaderDir) + "grass_scene.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
+                || !data->mSceneFrag.Load((std::string(shaderDir) + "grass_scene.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
                 || !data->mSceneProgram.AddShader(data->mSceneVert)
                 || !data->mSceneProgram.AddShader(data->mSceneFrag)) {
-            std::fprintf(stderr, "postfx: scene shader load failed\n");
+            std::fprintf(stderr, "grass: scene shader load failed\n");
             return false;
         }
-        if (!data->mGrassVert.Load((std::string(shaderDir) + "postfx_grass.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
-                || !data->mGrassFrag.Load((std::string(shaderDir) + "postfx_grass.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
+        if (!data->mGrassVert.Load((std::string(shaderDir) + "grass_blade.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
+                || !data->mGrassFrag.Load((std::string(shaderDir) + "grass_blade.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
                 || !data->mGrassProgram.AddShader(data->mGrassVert)
                 || !data->mGrassProgram.AddShader(data->mGrassFrag)) {
-            std::fprintf(stderr, "postfx: grass shader load failed\n");
+            std::fprintf(stderr, "grass: grass shader load failed\n");
             return false;
         }
-        if (!data->mGroundVert.Load((std::string(shaderDir) + "postfx_ground.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
-                || !data->mGroundFrag.Load((std::string(shaderDir) + "postfx_ground.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
+        if (!data->mGroundVert.Load((std::string(shaderDir) + "grass_ground.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
+                || !data->mGroundFrag.Load((std::string(shaderDir) + "grass_ground.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
                 || !data->mGroundProgram.AddShader(data->mGroundVert)
                 || !data->mGroundProgram.AddShader(data->mGroundFrag)) {
-            std::fprintf(stderr, "postfx: ground shader load failed\n");
+            std::fprintf(stderr, "grass: ground shader load failed\n");
             return false;
         }
-        if (!data->mBlitVert.Load((std::string(shaderDir) + "postfx_blit.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
-                || !data->mBlitFrag.Load((std::string(shaderDir) + "postfx_blit.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
+        if (!data->mBlitVert.Load((std::string(shaderDir) + "grass_vfx.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
+                || !data->mBlitFrag.Load((std::string(shaderDir) + "grass_vfx.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
                 || !data->mBlitProgram.AddShader(data->mBlitVert)
                 || !data->mBlitProgram.AddShader(data->mBlitFrag)) {
-            std::fprintf(stderr, "postfx: blit shader load failed\n");
+            std::fprintf(stderr, "grass: blit shader load failed\n");
             return false;
         }
-        if (!data->mNoiseComp.Load((std::string(shaderDir) + "postfx_noise.comp.spv").c_str(), moe::rhi::ShaderStage::kCompute)
+        if (!data->mNoiseComp.Load((std::string(shaderDir) + "grass_noise.comp.spv").c_str(), moe::rhi::ShaderStage::kCompute)
                 || !data->mNoiseProgram.AddShader(data->mNoiseComp)) {
-            std::fprintf(stderr, "postfx: noise shader load failed\n");
+            std::fprintf(stderr, "grass: noise shader load failed\n");
             return false;
         }
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
                 ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), error)) {
-            std::fprintf(stderr, "postfx: renderer: %s\n", error.c_str());
+            std::fprintf(stderr, "grass: renderer: %s\n", error.c_str());
             return false;
         }
         data->mSceneTarget = data->mRenderer.CreateRenderTarget(
                 ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(),
                 moe::rhi::Format::kR8G8B8A8Unorm, true, error);
         if (!data->mSceneTarget.IsValid()) {
-            std::fprintf(stderr, "postfx: scene target: %s\n", error.c_str());
+            std::fprintf(stderr, "grass: scene target: %s\n", error.c_str());
             return false;
         }
 
@@ -342,27 +342,27 @@ namespace {
         noiseInfo.mFormat = moe::rhi::Format::kR8G8B8A8Unorm;
         noiseInfo.mUsage = moe::rhi::ImageUsage::kStorage | moe::rhi::ImageUsage::kSampled;
         if (!ctx.mDevice.CreateImage(noiseInfo, data->mNoiseImage)) {
-            std::fprintf(stderr, "postfx: noise image: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "grass: noise image: %s\n", ctx.mDevice.GetLastError().c_str());
             return false;
         }
         moe::rhi::SamplerCreateInfo samplerInfo{};
         samplerInfo.mMinFilter = moe::rhi::Filter::kLinear;
         samplerInfo.mMagFilter = moe::rhi::Filter::kLinear;
         if (!ctx.mDevice.CreateSampler(samplerInfo, data->mNoiseSampler)) {
-            std::fprintf(stderr, "postfx: noise sampler failed\n");
+            std::fprintf(stderr, "grass: noise sampler failed\n");
             return false;
         }
         moe::rhi::ComputePipelineState noiseState{};
         noiseState.mProgram = &data->mNoiseProgram;
         if (!ctx.mDevice.GetOrCreateComputePipeline(noiseState, data->mNoisePipeline)) {
-            std::fprintf(stderr, "postfx: noise pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
+            std::fprintf(stderr, "grass: noise pipeline: %s\n", ctx.mDevice.GetLastError().c_str());
             return false;
         }
         moe::rhi::DescriptorSetLayout noiseLayout;
         if (!data->mNoisePipeline.GetDescriptorSetLayout(0, noiseLayout)
                 || !ctx.mDevice.CreateDescriptorSet(noiseLayout, data->mNoiseSet)
                 || !data->mNoiseSet.WriteImage(0, data->mNoiseImage, moe::rhi::DescriptorType::kStorageImage)) {
-            std::fprintf(stderr, "postfx: noise descriptor set failed\n");
+            std::fprintf(stderr, "grass: noise descriptor set failed\n");
             return false;
         }
 
@@ -378,7 +378,7 @@ namespace {
         if (data->mSceneMvp < 0 || data->mSceneModel < 0 || data->mGrassMvp < 0 || data->mGrassTime < 0
                 || data->mGroundMvp < 0 || data->mBlitDisplace < 0 || data->mBlitChromatic < 0
                 || data->mBlitVignette < 0 || data->mBlitScanline < 0) {
-            std::fprintf(stderr, "postfx: push constant names mismatch\n");
+            std::fprintf(stderr, "grass: push constant names mismatch\n");
             return false;
         }
 
@@ -441,7 +441,7 @@ namespace {
     void DrawUI(void* userdata, examples::AppContext&) {
         auto* data = static_cast<PostfxData*>(userdata);
 
-        ImGui::Begin("postfx demo");
+        ImGui::Begin("grass demo");
         ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
         ImGui::SliderFloat("displace", &data->mDisplace, 0.0f, 0.05f);
         ImGui::SliderFloat("chromatic", &data->mChromatic, 0.0f, 0.02f);
@@ -476,8 +476,8 @@ int main() {
 
     examples::App app;
     std::string error;
-    if (!app.Run("postfx demo", 1280, 720, callbacks, error)) {
-        std::fprintf(stderr, "postfx: app: %s\n", error.c_str());
+    if (!app.Run("grass demo", 1280, 720, callbacks, error)) {
+        std::fprintf(stderr, "grass: app: %s\n", error.c_str());
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

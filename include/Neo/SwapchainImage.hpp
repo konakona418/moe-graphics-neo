@@ -29,6 +29,9 @@ namespace moe::neo {
         rhi::Format GetFormat() const;
         uint32_t GetWidth() const;
         uint32_t GetHeight() const;
+        // The owning swapchain (valid while acquired); engine layers use it
+        // for the layout-managed BeginRendering/EndRendering pair.
+        rhi::Swapchain& GetSwapchain() const;
 
     private:
         rhi::Image mImage;

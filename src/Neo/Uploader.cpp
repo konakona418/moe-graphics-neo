@@ -30,6 +30,62 @@ namespace moe::neo {
         return true;
     }
 
+    bool Uploader::CreateStagingBuffer(size_t size, rhi::Buffer& out, std::string& error) {
+        rhi::BufferCreateInfo stagingInfo{};
+        stagingInfo.mSize = size;
+        stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
+        stagingInfo.mCpuVisible = true;
+        if (!mDevice->CreateBuffer(stagingInfo, out)) {
+            error = "Uploader: staging buffer creation failed: " + mDevice->GetLastError();
+            return false;
+        }
+        return true;
+    }
+
+    bool Uploader::UploadBytes(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
+            bool waitForCompletion, std::string& error) {
+        rhi::Buffer staging;
+        if (!CreateStagingBuffer(byteCount, staging, error)) {
+            return false;
+        }
+        {
+            auto* mapped = static_cast<uint8_t*>(staging.Map());
+            if (mapped == nullptr) {
+                error = "Uploader: failed to map staging buffer";
+                staging.Destroy();
+                return false;
+            }
+            std::memcpy(mapped, data, byteCount);
+            staging.Unmap();
+        }
+
+        rhi::CommandList cmd;
+        if (!mDevice->CreateCommandList(cmd)) {
+            error = "Uploader: command list creation failed";
+            staging.Destroy();
+            return false;
+        }
+        cmd.Begin();
+        cmd.CopyBuffer(staging, dst, byteCount, 0, 0);
+        // staging write -> shader read (this frame's or next frame's draws)
+        rhi::SyncInfo sync{};
+        sync.mSrcStage = rhi::PipelineStage::kTransfer;
+        sync.mSrcAccess = rhi::Access::kTransferWrite;
+        sync.mDstStage = rhi::PipelineStage::kVertexShader;
+        sync.mDstAccess = rhi::Access::kShaderRead;
+        cmd.BufferBarrier(dst, sync);
+        cmd.End();
+        if (!mDevice->Submit(cmd, waitForCompletion)) {
+            error = "Uploader: submit failed: " + mDevice->GetLastError();
+            cmd.Destroy();
+            staging.Destroy();
+            return false;
+        }
+        cmd.Destroy();
+        staging.Destroy();
+        return true;
+    }
+
     bool Uploader::UploadMesh(const Mesh& mesh, UploadedMesh& out, std::string& error) {
         if (mDevice == nullptr) {
             error = "Uploader: not initialized";
@@ -101,16 +157,11 @@ namespace moe::neo {
         indexInfo.mSize = indexBytes;
         indexInfo.mUsage = rhi::BufferUsage::kIndex | rhi::BufferUsage::kTransferDst
                 | rhi::BufferUsage::kTransferSrc;
-        rhi::BufferCreateInfo stagingInfo{};
-        stagingInfo.mSize = vertexBytes + indexBytes;
-        stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
-        stagingInfo.mCpuVisible = true;
 
         rhi::Buffer staging;
         if (!mDevice->CreateBuffer(vertexInfo, out.mVertexBuffer)
                 || !mDevice->CreateBuffer(indexInfo, out.mIndexBuffer)
-                || !mDevice->CreateBuffer(stagingInfo, staging)) {
-            error = "Uploader: buffer creation failed: " + mDevice->GetLastError();
+                || !CreateStagingBuffer(vertexBytes + indexBytes, staging, error)) {
             return false;
         }
 
@@ -118,6 +169,9 @@ namespace moe::neo {
             auto* data = static_cast<uint8_t*>(staging.Map());
             if (data == nullptr) {
                 error = "Uploader: failed to map staging buffer";
+                out.mVertexBuffer.Destroy();
+                out.mIndexBuffer.Destroy();
+                staging.Destroy();
                 return false;
             }
             std::memcpy(data, vertexData.data(), vertexData.size());
@@ -193,13 +247,8 @@ namespace moe::neo {
             return false;
         }
 
-        rhi::BufferCreateInfo stagingInfo{};
-        stagingInfo.mSize = texture.mData.size();
-        stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
-        stagingInfo.mCpuVisible = true;
         rhi::Buffer staging;
-        if (!mDevice->CreateBuffer(stagingInfo, staging)) {
-            error = "Uploader: staging buffer creation failed: " + mDevice->GetLastError();
+        if (!CreateStagingBuffer(texture.mData.size(), staging, error)) {
             out.mSampler.Destroy();
             out.mImage.Destroy();
             return false;
@@ -274,53 +323,9 @@ namespace moe::neo {
             return false;
         }
 
-        rhi::BufferCreateInfo stagingInfo{};
-        stagingInfo.mSize = byteCount;
-        stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
-        stagingInfo.mCpuVisible = true;
-        rhi::Buffer staging;
-        if (!mDevice->CreateBuffer(stagingInfo, staging)) {
-            error = "Uploader: staging buffer creation failed: " + mDevice->GetLastError();
-            return false;
-        }
-        {
-            auto* data = static_cast<uint8_t*>(staging.Map());
-            if (data == nullptr) {
-                error = "Uploader: failed to map staging buffer";
-                staging.Destroy();
-                return false;
-            }
-            std::memcpy(data, vertexData, byteCount);
-            staging.Unmap();
-        }
-
-        rhi::CommandList cmd;
-        if (!mDevice->CreateCommandList(cmd)) {
-            error = "Uploader: command list creation failed";
-            staging.Destroy();
-            return false;
-        }
-        cmd.Begin();
-        cmd.CopyBuffer(staging, mesh.mVertexBuffer, byteCount, 0, 0);
-        // staging write -> vertex shader read (next frame's draws)
-        rhi::SyncInfo sync{};
-        sync.mSrcStage = rhi::PipelineStage::kTransfer;
-        sync.mSrcAccess = rhi::Access::kTransferWrite;
-        sync.mDstStage = rhi::PipelineStage::kVertexShader;
-        sync.mDstAccess = rhi::Access::kShaderRead;
-        cmd.BufferBarrier(mesh.mVertexBuffer, sync);
-        cmd.End();
         // async submit: staging and the command list are released through the
         // device's deferred-deletion queue once the GPU is done with them
-        if (!mDevice->Submit(cmd, false)) {
-            error = "Uploader: submit failed: " + mDevice->GetLastError();
-            cmd.Destroy();
-            staging.Destroy();
-            return false;
-        }
-        cmd.Destroy();
-        staging.Destroy();
-        return true;
+        return UploadBytes(vertexData, byteCount, mesh.mVertexBuffer, false, error);
     }
 
     bool Uploader::UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
@@ -341,52 +346,10 @@ namespace moe::neo {
             error = "UploadData: buffer: " + mDevice->GetLastError();
             return false;
         }
-
-        rhi::BufferCreateInfo stagingInfo{};
-        stagingInfo.mSize = byteCount;
-        stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
-        stagingInfo.mCpuVisible = true;
-        rhi::Buffer staging;
-        if (!mDevice->CreateBuffer(stagingInfo, staging)) {
-            error = "UploadData: staging: " + mDevice->GetLastError();
+        if (!UploadBytes(data, byteCount, out, true, error)) {
             out.Destroy();
             return false;
         }
-        void* mapped = staging.Map();
-        if (mapped == nullptr) {
-            error = "UploadData: staging map failed";
-            staging.Destroy();
-            out.Destroy();
-            return false;
-        }
-        std::memcpy(mapped, data, byteCount);
-        staging.Unmap();
-
-        rhi::CommandList cmd;
-        if (!mDevice->CreateCommandList(cmd)) {
-            error = "UploadData: command list creation failed";
-            staging.Destroy();
-            out.Destroy();
-            return false;
-        }
-        cmd.Begin();
-        cmd.CopyBuffer(staging, out, byteCount, 0, 0);
-        rhi::SyncInfo sync{};
-        sync.mSrcStage = rhi::PipelineStage::kTransfer;
-        sync.mSrcAccess = rhi::Access::kTransferWrite;
-        sync.mDstStage = rhi::PipelineStage::kVertexShader;
-        sync.mDstAccess = rhi::Access::kShaderRead;
-        cmd.BufferBarrier(out, sync);
-        cmd.End();
-        if (!mDevice->Submit(cmd, true)) {
-            error = "UploadData: submit failed: " + mDevice->GetLastError();
-            cmd.Destroy();
-            staging.Destroy();
-            out.Destroy();
-            return false;
-        }
-        cmd.Destroy();
-        staging.Destroy();
         moe::Logger::info("Uploaded buffer ({} bytes)", byteCount);
         return true;
     }

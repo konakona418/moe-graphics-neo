@@ -166,4 +166,55 @@ namespace moe::rhi {
         MOE_RHI_ASSERT(false, "ToVkAccess: unhandled Access");
         return 0;
     }
+
+    // ---- barrier recording (single place that fills the sync fields) ----
+
+    inline void FillSync(VkMemoryBarrier2& barrier, const SyncInfo& sync) {
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        barrier.srcStageMask = ToVkPipelineStage(sync.mSrcStage);
+        barrier.srcAccessMask = ToVkAccess(sync.mSrcAccess);
+        barrier.dstStageMask = ToVkPipelineStage(sync.mDstStage);
+        barrier.dstAccessMask = ToVkAccess(sync.mDstAccess);
+    }
+
+    inline void FillSync(VkBufferMemoryBarrier2& barrier, const SyncInfo& sync) {
+        barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+        barrier.srcStageMask = ToVkPipelineStage(sync.mSrcStage);
+        barrier.srcAccessMask = ToVkAccess(sync.mSrcAccess);
+        barrier.dstStageMask = ToVkPipelineStage(sync.mDstStage);
+        barrier.dstAccessMask = ToVkAccess(sync.mDstAccess);
+    }
+
+    inline void FillSync(VkImageMemoryBarrier2& barrier, const SyncInfo& sync) {
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        barrier.srcStageMask = ToVkPipelineStage(sync.mSrcStage);
+        barrier.srcAccessMask = ToVkAccess(sync.mSrcAccess);
+        barrier.dstStageMask = ToVkPipelineStage(sync.mDstStage);
+        barrier.dstAccessMask = ToVkAccess(sync.mDstAccess);
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    }
+
+    // Records one image layout transition for a raw VkImage (swapchain
+    // images included; the RHI Image wrapper feeds its own view info here).
+    inline void RecordImageBarrier(VkCommandBuffer cmd, VkImage image,
+            VkImageAspectFlags aspect, uint32_t levelCount, uint32_t layerCount,
+            ImageLayout oldLayout, ImageLayout newLayout, const SyncInfo& sync) {
+        VkImageMemoryBarrier2 barrier{};
+        FillSync(barrier, sync);
+        barrier.oldLayout = ToVkImageLayout(oldLayout);
+        barrier.newLayout = ToVkImageLayout(newLayout);
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = aspect;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = levelCount;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = layerCount;
+
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = 1;
+        dependency.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmd, &dependency);
+    }
 }// namespace moe::rhi

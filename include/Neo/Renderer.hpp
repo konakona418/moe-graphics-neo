@@ -123,7 +123,7 @@ namespace moe::neo {
     //       pass.SetPushConstant(mvpIdx, &mvp);
     //       pass.Draw(mesh, program);
     //   });
-    //   renderer.EndFrame(); // ends any leftover pass, transitions PresentSrc
+    //   renderer.EndFrame(); // ends any leftover pass
     class Renderer {
     public:
         Renderer();
@@ -138,8 +138,9 @@ namespace moe::neo {
 
         // Begins a frame; `frame` is the current swapchain image (acquired
         // via SwapchainImage::Acquire, valid until Release after EndFrame).
-        // The swapchain image must currently be in PresentSrc layout (as App
-        // leaves it after EndRendering). Per-frame state is reset here.
+        // The swapchain image's layout is tracked by the Swapchain itself, so
+        // any starting layout (Undefined after acquire, PresentSrc after a
+        // previous frame) is handled. Per-frame state is reset here.
         void BeginFrame(rhi::CommandList& cmd, const SwapchainImage& frame,
                 const float clearColor[4]);
 
@@ -166,8 +167,9 @@ namespace moe::neo {
             Execute(desc, [&](PassContext& context) { pass.Execute(context); });
         }
 
-        // Sorts nothing, records nothing: ends any leftover pass and
-        // transitions the swapchain back to PresentSrc if it was drawn to.
+        // Closes any leftover pass (swapchain passes end through the
+        // Swapchain, which returns the image to PresentSrc) and logs
+        // per-second stats.
         void EndFrame();
 
         // Resolves a push constant member name of `program` to an index for

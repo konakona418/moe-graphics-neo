@@ -4,27 +4,21 @@
 // decode paths, AL lifecycle and teardown staying crash-free. Skips gracefully
 // when no OpenAL device exists.
 
+#include <Core/FileIo.hpp>
 #include <Neo/Audio.hpp>
 #include <Neo/OggProvider.hpp>
 
 #include <chrono>
 #include <cstdio>
-#include <fstream>
 #include <thread>
 
 #include <glm/glm.hpp>
 
-namespace {
-    std::vector<uint8_t> ReadFile(const char* path) {
-        std::ifstream file(path, std::ios::binary);
-        return std::vector<uint8_t>(std::istreambuf_iterator<char>(file), {});
-    }
-}// namespace
-
 int main() {
-    const std::vector<uint8_t> ogg = ReadFile(MOE_SOURCE_DIR "/test/assets/tone.ogg");
-    if (ogg.empty()) {
-        std::fprintf(stderr, "[audio-smoke] FAILED: cannot read test/assets/tone.ogg\n");
+    std::vector<uint8_t> ogg;
+    std::string readError;
+    if (!moe::ReadFileBytes(MOE_SOURCE_DIR "/test/assets/tone.ogg", ogg, readError)) {
+        std::fprintf(stderr, "[audio-smoke] FAILED: %s\n", readError.c_str());
         return 1;
     }
 

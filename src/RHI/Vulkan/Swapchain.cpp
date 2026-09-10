@@ -1,6 +1,7 @@
 #include "RHI/Swapchain.hpp"
 
 #include "RHI/CommandList.hpp"
+#include "Mappings.hpp"
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
 
@@ -38,41 +39,39 @@ namespace moe::rhi {
         const VkResult result = vkAcquireNextImageKHR(mImpl->mDevice->mDevice,
                 mImpl->mSwapchain, UINT64_MAX, mImpl->mImageAvailable, VK_NULL_HANDLE,
                 &mImpl->mCurrentImage);
-        return result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR;
+        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
+            // acquired contents are undefined
+            mImpl->mCurrentLayout = ImageLayout::kUndefined;
+            return true;
+        }
+        return false;
     }
 
-    bool Swapchain::BeginRendering(CommandList& cmd, const float clearColor[4]) {
+    bool Swapchain::BeginRendering(CommandList& cmd, const float clearColor[4], LoadOp loadOp) {
         if (mImpl == nullptr || mImpl->mCurrentImage >= mImpl->mImages.size()) {
             return false;
         }
 
-        // Acquired image (treated as Undefined, contents discarded) -> color attachment.
-        VkImageMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        barrier.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
-        barrier.srcAccessMask = VK_ACCESS_2_NONE;
-        barrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = mImpl->mImages[mImpl->mCurrentImage];
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.layerCount = 1;
-
-        VkDependencyInfo dependency{};
-        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency.imageMemoryBarrierCount = 1;
-        dependency.pImageMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(cmd.mImpl->mCommandBuffer, &dependency);
+        // current layout (Undefined after acquire, PresentSrc after a
+        // previous EndRendering) -> color attachment
+        SyncInfo toColor{};
+        toColor.mSrcStage = mImpl->mCurrentLayout == ImageLayout::kPresentSrc
+                ? PipelineStage::kBottomOfPipe
+                : PipelineStage::kTopOfPipe;
+        toColor.mSrcAccess = Access::kNone;
+        toColor.mDstStage = PipelineStage::kColorAttachmentOutput;
+        toColor.mDstAccess = Access::kColorAttachmentWrite;
+        RecordImageBarrier(cmd.mImpl->mCommandBuffer, mImpl->mImages[mImpl->mCurrentImage],
+                VK_IMAGE_ASPECT_COLOR_BIT, 1, 1,
+                mImpl->mCurrentLayout, ImageLayout::kColorAttachment, toColor);
+        mImpl->mCurrentLayout = ImageLayout::kColorAttachment;
 
         VkRenderingAttachmentInfo colorAttachment{};
         colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         colorAttachment.imageView = mImpl->mImageViews[mImpl->mCurrentImage];
-        colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.imageLayout = ToVkImageLayout(ImageLayout::kColorAttachment);
+        colorAttachment.loadOp = loadOp == LoadOp::kClear
+                ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         colorAttachment.clearValue.color = {
                 {clearColor[0], clearColor[1], clearColor[2], clearColor[3]}};
@@ -91,26 +90,48 @@ namespace moe::rhi {
         vkCmdEndRendering(cmd.mImpl->mCommandBuffer);
 
         // color attachment -> presentable
-        VkImageMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-        barrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_2_NONE;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = mImpl->mImages[mImpl->mCurrentImage];
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.layerCount = 1;
+        SyncInfo toPresent{};
+        toPresent.mSrcStage = PipelineStage::kColorAttachmentOutput;
+        toPresent.mSrcAccess = Access::kColorAttachmentWrite;
+        toPresent.mDstStage = PipelineStage::kBottomOfPipe;
+        toPresent.mDstAccess = Access::kNone;
+        RecordImageBarrier(cmd.mImpl->mCommandBuffer, mImpl->mImages[mImpl->mCurrentImage],
+                VK_IMAGE_ASPECT_COLOR_BIT, 1, 1,
+                ImageLayout::kColorAttachment, ImageLayout::kPresentSrc, toPresent);
+        mImpl->mCurrentLayout = ImageLayout::kPresentSrc;
+    }
 
-        VkDependencyInfo dependency{};
-        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency.imageMemoryBarrierCount = 1;
-        dependency.pImageMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(cmd.mImpl->mCommandBuffer, &dependency);
+    bool Swapchain::BeginTransfer(CommandList& cmd) {
+        if (mImpl == nullptr || mImpl->mCurrentImage >= mImpl->mImages.size()) {
+            return false;
+        }
+        SyncInfo toTransfer{};
+        toTransfer.mSrcStage = mImpl->mCurrentLayout == ImageLayout::kPresentSrc
+                ? PipelineStage::kBottomOfPipe
+                : PipelineStage::kTopOfPipe;
+        toTransfer.mSrcAccess = Access::kNone;
+        toTransfer.mDstStage = PipelineStage::kTransfer;
+        toTransfer.mDstAccess = Access::kTransferWrite;
+        RecordImageBarrier(cmd.mImpl->mCommandBuffer, mImpl->mImages[mImpl->mCurrentImage],
+                VK_IMAGE_ASPECT_COLOR_BIT, 1, 1,
+                mImpl->mCurrentLayout, ImageLayout::kTransferDst, toTransfer);
+        mImpl->mCurrentLayout = ImageLayout::kTransferDst;
+        return true;
+    }
+
+    void Swapchain::EndTransfer(CommandList& cmd) {
+        if (mImpl == nullptr || mImpl->mCurrentLayout != ImageLayout::kTransferDst) {
+            return;
+        }
+        SyncInfo toPresent{};
+        toPresent.mSrcStage = PipelineStage::kTransfer;
+        toPresent.mSrcAccess = Access::kTransferWrite;
+        toPresent.mDstStage = PipelineStage::kBottomOfPipe;
+        toPresent.mDstAccess = Access::kNone;
+        RecordImageBarrier(cmd.mImpl->mCommandBuffer, mImpl->mImages[mImpl->mCurrentImage],
+                VK_IMAGE_ASPECT_COLOR_BIT, 1, 1,
+                ImageLayout::kTransferDst, ImageLayout::kPresentSrc, toPresent);
+        mImpl->mCurrentLayout = ImageLayout::kPresentSrc;
     }
 
     bool Swapchain::Present(CommandList& cmd) {
@@ -121,7 +142,9 @@ namespace moe::rhi {
 
         VkSemaphore renderFinished = mImpl->mRenderFinished[mImpl->mCurrentImage];
 
-        VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        // vkQueueSubmit's wait-stage mask uses the 32-bit VkPipelineStageFlags
+        // (not the 64-bit VkPipelineStageFlagBits2 used by synchronization2).
+        const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         VkSubmitInfo submit{};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.waitSemaphoreCount = 1;
