@@ -3,12 +3,14 @@ add_library(moe-neo STATIC
   Assets.cpp
   Audio.cpp
   Content.cpp
+  Font.cpp
   Importer.cpp
   Input.cpp
   OggProvider.cpp
   Renderer.cpp
   SceneGraph.cpp
   SwapchainImage.cpp
+  Text.cpp
   TextureLoader.cpp
   Uploader.cpp
   Window.cpp

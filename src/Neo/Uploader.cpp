@@ -81,7 +81,7 @@ namespace moe::neo {
     }
 
     bool Uploader::UploadBytes(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
-            bool waitForCompletion) {
+            bool waitForCompletion, rhi::PipelineStage dstStage, rhi::Access dstAccess) {
         rhi::Buffer staging;
         if (!CreateStagingBuffer(byteCount, staging)) {
             return false;
@@ -107,8 +107,8 @@ namespace moe::neo {
         rhi::SyncInfo sync{};
         sync.mSrcStage = rhi::PipelineStage::kTransfer;
         sync.mSrcAccess = rhi::Access::kTransferWrite;
-        sync.mDstStage = rhi::PipelineStage::kVertexShader;
-        sync.mDstAccess = rhi::Access::kShaderRead;
+        sync.mDstStage = dstStage;
+        sync.mDstAccess = dstAccess;
         cmd.BufferBarrier(dst, sync);
         cmd.End();
         if (!mDevice->Submit(cmd, waitForCompletion)) {
@@ -381,7 +381,7 @@ namespace moe::neo {
     }
 
     bool Uploader::UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
-            rhi::Buffer& out) {
+            rhi::Buffer& out, rhi::PipelineStage dstStage, rhi::Access dstAccess) {
         if (mDevice == nullptr) {
             return moe::Fail("Uploader: not initialized");
         }
@@ -395,11 +395,23 @@ namespace moe::neo {
         if (!mDevice->CreateBuffer(dstInfo, out)) {
             return moe::Fail("UploadData: buffer: " + moe::Error::Get());
         }
-        if (!UploadBytes(data, byteCount, out, true)) {
+        if (!UploadBytes(data, byteCount, out, true, dstStage, dstAccess)) {
             out.Destroy();
             return false;
         }
         moe::Logger::info("Uploaded buffer ({} bytes)", byteCount);
         return true;
+    }
+
+    bool Uploader::UpdateBuffer(const rhi::Buffer& dst, const void* data, size_t byteCount,
+            rhi::PipelineStage dstStage, rhi::Access dstAccess) {
+        if (mDevice == nullptr) {
+            return moe::Fail("Uploader: not initialized");
+        }
+        if (byteCount == 0 || data == nullptr || byteCount > dst.GetSize()) {
+            return moe::Fail("UpdateBuffer: empty or out of range");
+        }
+        return UploadBytes(static_cast<const uint8_t*>(data), byteCount, dst, true, dstStage,
+                dstAccess);
     }
 }// namespace moe::neo

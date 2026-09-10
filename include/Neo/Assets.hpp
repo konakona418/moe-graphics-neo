@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Neo/Cache.hpp"
+#include "Neo/Font.hpp"
 #include "Neo/Material.hpp"
 #include "Neo/Scene.hpp"
 #include "Neo/Texture.hpp"
@@ -137,11 +138,17 @@ namespace moe::neo {
         TextureHandle LoadTexture(const char* path, bool srgb);
         TextureHandle UploadTexture(const Texture& texture);
 
+        // Loads a TrueType font and preprocesses the glyphs for the text
+        // renderer: ASCII plus every codepoint in `sampleText` is extracted
+        // (outline curves, band acceleration structure, kerning).
+        Font LoadFont(const char* path, std::string_view sampleText);
+
         ProgramHandle LoadGraphicsProgram(const char* vertexPath, const char* fragmentPath);
         ProgramHandle LoadComputeProgram(const char* path);
 
         ModelData* GetModel(ModelHandle handle);
         UploadedTexture* GetTexture(TextureHandle handle);
+        FontData* GetFont(FontHandle handle);
         rhi::ShaderProgram* GetProgram(ProgramHandle handle);
 
     private:
@@ -156,6 +163,7 @@ namespace moe::neo {
         Uploader mUploader;
         Cache<ModelData> mModels;
         Cache<UploadedTexture> mTextures;
+        Cache<FontData> mFonts;
         Cache<rhi::ShaderProgram> mPrograms;
         Cache<rhi::Shader> mShaders;
     };

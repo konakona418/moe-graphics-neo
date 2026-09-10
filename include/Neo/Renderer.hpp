@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace moe::neo {
@@ -136,6 +137,16 @@ namespace moe::neo {
         void Draw(const UploadedMesh& mesh, const rhi::ShaderProgram& program,
                 rhi::PrimitiveTopology topology = rhi::PrimitiveTopology::kTriangleList,
                 uint32_t instanceCount = 1);
+        // Raw vertex draw for callers with their own vertex layout (e.g.
+        // text): the buffer is bound at binding 0 and `attributes` are the
+        // shader's declared locations/formats/offsets, exactly as reflected
+        // from SPIR-V. No index buffer is used. `firstVertex` offsets into
+        // the buffer (draws may share one frame arena).
+        void DrawVertices(const rhi::Buffer& vertexBuffer, uint32_t vertexCount,
+                const rhi::VertexAttribute* attributes, uint32_t attributeCount,
+                uint32_t stride, const rhi::ShaderProgram& program,
+                rhi::PrimitiveTopology topology = rhi::PrimitiveTopology::kTriangleList,
+                uint32_t firstVertex = 0);
         void DrawFullscreen(const rhi::ShaderProgram& program);
 
         // ---- content layer ----
@@ -144,7 +155,7 @@ namespace moe::neo {
         // cameraPos to programs that declare those push constant names.
         void SetCamera(const Camera& camera);
 
-        // Drops every image/sampler binding (DrawModel calls this per
+        // Drops every image/sampler/buffer binding (DrawModel calls this per
         // primitive so stale material textures never leak into the next one).
         void ClearTextureBindings();
 
@@ -164,6 +175,16 @@ namespace moe::neo {
         // Draws only the parts whose material name matches (escape hatch).
         void DrawModelPart(const Model& model, const char* materialName, ProgramHandle program,
                 const glm::mat4& transform);
+
+        // Text draw from glyph outlines: lays out UTF-8 `text` (word order
+        // left to right, '\n' breaks lines), builds the glyph vertices and
+        // draws them with `program` (the text shader). The program must
+        // declare the push constant names viewProj/model/viewport and the
+        // storage buffers `curveData`/`bandData`. The shader outputs
+        // premultiplied coverage, so draw with premultiplied blending
+        // (src = One, dst = OneMinusSrcAlpha).
+        void DrawText(const Font& font, std::string_view text, const TextDrawParams& params,
+                ProgramHandle program);
 
     private:
         friend class Renderer;
@@ -283,6 +304,18 @@ namespace moe::neo {
         // immediate-mode draw entry (called from PassContext)
         void DrawImmediate(const UploadedMesh* mesh, const rhi::ShaderProgram& program,
                 rhi::PrimitiveTopology topology, uint32_t instanceCount);
+        void DrawVerticesImmediate(const rhi::Buffer& vertexBuffer, uint32_t vertexCount,
+                const rhi::VertexAttribute* attributes, uint32_t attributeCount,
+                uint32_t stride, const rhi::ShaderProgram& program,
+                rhi::PrimitiveTopology topology, uint32_t firstVertex);
+        // Size in pixels of the pass currently being recorded.
+        glm::vec2 GetViewportSizeInternal() const;
+        // Appends per-frame dynamic vertices (text) to the frame arena and
+        // returns the byte offset of the appended block, or UINT32_MAX on
+        // failure. The arena is uploaded once in EndFrame, before the frame
+        // is submitted, so recorded draws read stable data.
+        uint32_t AppendDynamicVertices(const void* data, uint32_t bytes);
+        const rhi::Buffer& GetDynamicVertexBufferInternal() const;
         bool SetPushConstantInternal(int32_t index, const void* data, size_t size);
         int32_t LookupField(const rhi::ShaderProgram& program, const char* name);
 

@@ -137,6 +137,16 @@ namespace moe::neo {
         // BeginFrame (queue is serial, so in-flight usage has finished).
         std::vector<std::unique_ptr<rhi::DescriptorSet>> mFrameSets;
 
+        // Per-frame dynamic vertex arena (text): vertices are gathered on the
+        // CPU while passes are recorded, then uploaded once in EndFrame —
+        // before the frame's command buffer is submitted — so every recorded
+        // draw reads its own stable block.
+        std::vector<uint8_t> mDynamicVertexCpu;
+        rhi::Buffer mDynamicVertexBuffer;
+        uint32_t mDynamicVertexCapacity{0};
+        bool mDynamicVertexUsed{false};
+        Uploader mUploader;
+
         // per-second frame statistics
         std::chrono::steady_clock::time_point mStatsTime{};
         uint32_t mStatsFrames{0};
@@ -282,39 +292,7 @@ namespace moe::neo {
         rhi::GraphicsPipelineState BuildPipelineState(const UploadedMesh* mesh,
                 const rhi::ShaderProgram& program, rhi::PrimitiveTopology topology,
                 bool useInstancing) {
-            rhi::GraphicsPipelineState state{};
-            state.mProgram = &program;
-            state.mTopology = topology;
-
-            state.mColorFormatCount = 1;
-            state.mColorFormats[0] =
-                    mTargetPtr != nullptr ? mTargetPtr->mFormat : mSwapchainFormat;
-            state.mDepthFormat = rhi::Format::kD32Float;
-            state.mMultisample.mSampleCount = static_cast<uint8_t>(
-                    mTargetPtr != nullptr ? mTargetPtr->mSampleCount : mSampleCount);
-
-            state.mBlendAttachmentCount = 1;
-            state.mBlendAttachments[0].mBlendEnabled = mState.mBlendEnabled;
-            state.mBlendAttachments[0].mSrcColor = mState.mBlendSrcColor;
-            state.mBlendAttachments[0].mDstColor = mState.mBlendDstColor;
-            state.mBlendAttachments[0].mColorOp = mState.mBlendColorOp;
-            state.mBlendAttachments[0].mSrcAlpha = mState.mBlendSrcAlpha;
-            state.mBlendAttachments[0].mDstAlpha = mState.mBlendDstAlpha;
-            state.mBlendAttachments[0].mAlphaOp = mState.mBlendAlphaOp;
-
-            state.mRaster.mCullMode = mState.mCullMode;
-            state.mRaster.mFrontFace = mState.mFrontFace;
-            state.mRaster.mPolygonMode = mState.mPolygonMode;
-            if (mesh == nullptr) {
-                // Fullscreen passes: the fullscreen triangle's winding is
-                // fixed by the generated UV formula (clockwise in window
-                // space), so culling would always discard it. Ignore it.
-                state.mRaster.mCullMode = rhi::CullMode::kNone;
-            }
-
-            state.mDepth.mTestEnable = mState.mDepthTest;
-            state.mDepth.mWriteEnable = mState.mDepthWrite;
-            state.mDepth.mCompareOp = mState.mDepthCompareOp;
+            rhi::GraphicsPipelineState state = BasePipelineState(program, topology, mesh == nullptr);
 
             uint32_t attributeCount = 0;
             if (mesh != nullptr) {
@@ -353,6 +331,125 @@ namespace moe::neo {
             state.mVertexAttributeCount = attributeCount;
             return state;
         }
+
+        // Common state (formats, blending, rasterization, depth) for both the
+        // mesh and the raw-vertex pipeline builders.
+        rhi::GraphicsPipelineState BasePipelineState(const rhi::ShaderProgram& program,
+                rhi::PrimitiveTopology topology, bool noCull) {
+            rhi::GraphicsPipelineState state{};
+            state.mProgram = &program;
+            state.mTopology = topology;
+
+            state.mColorFormatCount = 1;
+            state.mColorFormats[0] =
+                    mTargetPtr != nullptr ? mTargetPtr->mFormat : mSwapchainFormat;
+            state.mDepthFormat = rhi::Format::kD32Float;
+            state.mMultisample.mSampleCount = static_cast<uint8_t>(
+                    mTargetPtr != nullptr ? mTargetPtr->mSampleCount : mSampleCount);
+
+            state.mBlendAttachmentCount = 1;
+            state.mBlendAttachments[0].mBlendEnabled = mState.mBlendEnabled;
+            state.mBlendAttachments[0].mSrcColor = mState.mBlendSrcColor;
+            state.mBlendAttachments[0].mDstColor = mState.mBlendDstColor;
+            state.mBlendAttachments[0].mColorOp = mState.mBlendColorOp;
+            state.mBlendAttachments[0].mSrcAlpha = mState.mBlendSrcAlpha;
+            state.mBlendAttachments[0].mDstAlpha = mState.mBlendDstAlpha;
+            state.mBlendAttachments[0].mAlphaOp = mState.mBlendAlphaOp;
+
+            state.mRaster.mCullMode = noCull ? rhi::CullMode::kNone : mState.mCullMode;
+            state.mRaster.mFrontFace = mState.mFrontFace;
+            state.mRaster.mPolygonMode = mState.mPolygonMode;
+
+            state.mDepth.mTestEnable = mState.mDepthTest;
+            state.mDepth.mWriteEnable = mState.mDepthWrite;
+            state.mDepth.mCompareOp = mState.mDepthCompareOp;
+            return state;
+        }
+
+        // Raw vertex layout (DrawVertices): caller-supplied attributes, one
+        // binding at binding 0.
+        rhi::GraphicsPipelineState BuildPipelineState(const rhi::VertexAttribute* attributes,
+                uint32_t attributeCount, uint32_t stride, const rhi::ShaderProgram& program,
+                rhi::PrimitiveTopology topology) {
+            rhi::GraphicsPipelineState state = BasePipelineState(program, topology, false);
+            if (stride > 0 && attributeCount > 0) {
+                state.mVertexBindingCount = 1;
+                state.mVertexBindings[0] = {0, stride, false};
+                for (uint32_t i = 0; i < attributeCount; ++i) {
+                    state.mVertexAttributes[i] = attributes[i];
+                }
+                state.mVertexAttributeCount = attributeCount;
+            }
+            return state;
+        }
+
+        // Records the pipeline, its push constants and the per-draw
+        // descriptor set. Shared by the mesh path (DrawImmediate) and the
+        // raw-vertex path (DrawVerticesImmediate).
+        bool RecordDraw(rhi::CommandList& cmd, const rhi::GraphicsPipelineState& state,
+                const rhi::ShaderProgram& program) {
+            // pipeline: collect/cache; rebind when the hash changes or when a
+            // push constant of this program changed since the last draw (the
+            // rebind is what records the values into the command buffer)
+            const uint64_t hash = state.GetHash();
+            if (hash != mCurrentPipelineHash || HasDirtyFields(program)) {
+                rhi::GraphicsPipeline pipeline;
+                if (!mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
+                    moe::Error::Set("Draw: pipeline: " + moe::Error::Get());
+                    return false;
+                }
+                cmd.BindGraphicsPipeline(pipeline);
+
+                // replay push constants: per field, only those this program
+                // declares and the user has set (fields of different programs
+                // may share offsets; each keeps its own value)
+                for (auto& field : mFields) {
+                    if (field.mProgram != &program || field.mValue.empty()) {
+                        continue;
+                    }
+                    cmd.SetPushConstants(pipeline, field.mOffset, field.mSize, field.mValue.data());
+                    field.mDirty = false;
+                }
+
+                mCurrentPipelineHash = hash;
+            }
+
+            // images/samplers/buffers: rebuild the descriptor set per draw
+            // (correct and cheap at teaching scale)
+            if (mImageCount > 0 || mSamplerCount > 0 || mBufferCount > 0) {
+                rhi::GraphicsPipeline pipeline;
+                if (mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
+                    rhi::DescriptorSetLayout layout;
+                    if (pipeline.GetDescriptorSetLayout(0, layout)) {
+                        auto set = std::make_unique<rhi::DescriptorSet>();
+                        if (mDevice->CreateDescriptorSet(layout, *set)) {
+                            bool written = true;
+                            for (uint32_t i = 0; i < mImageCount; ++i) {
+                                written &= set->WriteImage(mImages[i].mBinding,
+                                        *mImages[i].mImage, rhi::DescriptorType::kSampledImage);
+                            }
+                            for (uint32_t i = 0; i < mSamplerCount; ++i) {
+                                written &= set->WriteSampler(mSamplers[i].mBinding,
+                                        *mSamplers[i].mSampler);
+                            }
+                            for (uint32_t i = 0; i < mBufferCount; ++i) {
+                                written &= set->WriteBuffer(mBuffers[i].mBinding,
+                                        *mBuffers[i].mBuffer);
+                            }
+                            if (written) {
+                                cmd.BindDescriptorSet(pipeline, *set, 0);
+                                mFrameSets.push_back(std::move(set));
+                            } else {
+                                moe::Error::Set("Draw: descriptor write failed "
+                                        "(binding not declared in the shader?)");
+                                set->Destroy();
+                            }
+                        }
+                    }
+                }
+            }
+            return true;
+        }
     };
 
     Renderer::Renderer() : mImpl(std::make_unique<Impl>()) {}
@@ -374,6 +471,11 @@ namespace moe::neo {
         mImpl->mWidth = width;
         mImpl->mHeight = height;
         mImpl->mSampleCount = sampleCount;
+
+        if (!mImpl->mUploader.Init(device)) {
+            mImpl->mDevice = nullptr;
+            return moe::Fail("Renderer: uploader: " + moe::Error::Get());
+        }
 
         rhi::ImageCreateInfo depthInfo{};
         depthInfo.mType = rhi::ImageType::k2D;
@@ -416,6 +518,9 @@ namespace moe::neo {
         });
         mImpl->mTargets.Clear();
         mImpl->mDepthImage.Destroy();
+        mImpl->mDynamicVertexBuffer.Destroy();
+        mImpl->mDynamicVertexCapacity = 0;
+        mImpl->mDynamicVertexCpu.clear();
         mImpl->mDevice = nullptr;
         moe::Logger::info("Renderer destroyed");
     }
@@ -446,6 +551,8 @@ namespace moe::neo {
         mImpl->mCurrentTarget = nullptr;
         mImpl->mDepthTargetPtr = nullptr;
         mImpl->mCurrentPipelineHash = 0;
+        mImpl->mDynamicVertexCpu.clear();
+        mImpl->mDynamicVertexUsed = false;
     }
 
     void Renderer::EndFrame() {
@@ -460,6 +567,19 @@ namespace moe::neo {
             }
             impl.mPassOpen = false;
             impl.mDepthTargetPtr = nullptr;
+        }
+
+        // Upload the frame's dynamic vertices (text) now: the frame's command
+        // buffer has not been submitted yet, so every recorded draw will read
+        // the data it was recorded with. The upload runs in its own
+        // submission (transfer + barrier), which the host waits for.
+        if (!impl.mDynamicVertexCpu.empty()) {
+            const uint32_t bytes = static_cast<uint32_t>(impl.mDynamicVertexCpu.size());
+            if (!impl.mUploader.UpdateBuffer(impl.mDynamicVertexBuffer,
+                        impl.mDynamicVertexCpu.data(), bytes, rhi::PipelineStage::kVertexInput,
+                        rhi::Access::kVertexAttributeRead)) {
+                moe::Error::Set("Renderer: dynamic vertex upload: " + moe::Error::Get());
+            }
         }
 
         // per-second stats (avoids log flooding while keeping visibility)
@@ -496,6 +616,7 @@ namespace moe::neo {
     void Renderer::ClearTextureBindingsInternal() {
         mImpl->mImageCount = 0;
         mImpl->mSamplerCount = 0;
+        mImpl->mBufferCount = 0;
     }
 
     void Renderer::BindImageInternal(uint32_t binding, const rhi::Image& image) {
@@ -856,68 +977,11 @@ namespace moe::neo {
             return;
         }
 
-        // pipeline: collect/cache; rebind when the hash changes or when a
-        // push constant of this program changed since the last draw (the
-        // rebind is what records the values into the command buffer)
         const bool useInstancing = instanceCount > 1;
         const rhi::GraphicsPipelineState state =
                 impl.BuildPipelineState(mesh, program, topology, useInstancing);
-        const uint64_t hash = state.GetHash();
-        if (hash != impl.mCurrentPipelineHash || impl.HasDirtyFields(program)) {
-            rhi::GraphicsPipeline pipeline;
-            if (!impl.mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
-                moe::Error::Set("Draw: pipeline: " + moe::Error::Get());
-                return;
-            }
-            cmd.BindGraphicsPipeline(pipeline);
-
-            // replay push constants: per field, only those this program
-            // declares and the user has set (fields of different programs may
-            // share offsets; each keeps its own value)
-            for (auto& field : impl.mFields) {
-                if (field.mProgram != &program || field.mValue.empty()) {
-                    continue;
-                }
-                cmd.SetPushConstants(pipeline, field.mOffset, field.mSize, field.mValue.data());
-                field.mDirty = false;
-            }
-
-            impl.mCurrentPipelineHash = hash;
-        }
-
-        // images/samplers: rebuild the descriptor set per draw (correct and
-        // cheap at teaching scale)
-        if (impl.mImageCount > 0 || impl.mSamplerCount > 0 || impl.mBufferCount > 0) {
-            rhi::GraphicsPipeline pipeline;
-            if (impl.mDevice->GetOrCreateGraphicsPipeline(state, pipeline)) {
-                rhi::DescriptorSetLayout layout;
-                if (pipeline.GetDescriptorSetLayout(0, layout)) {
-                    auto set = std::make_unique<rhi::DescriptorSet>();
-                    if (impl.mDevice->CreateDescriptorSet(layout, *set)) {
-                        bool written = true;
-                        for (uint32_t i = 0; i < impl.mImageCount; ++i) {
-                            written &= set->WriteImage(impl.mImages[i].mBinding,
-                                    *impl.mImages[i].mImage, rhi::DescriptorType::kSampledImage);
-                        }
-                        for (uint32_t i = 0; i < impl.mSamplerCount; ++i) {
-                            written &= set->WriteSampler(impl.mSamplers[i].mBinding,
-                                    *impl.mSamplers[i].mSampler);
-                        }
-                        for (uint32_t i = 0; i < impl.mBufferCount; ++i) {
-                            written &= set->WriteBuffer(impl.mBuffers[i].mBinding,
-                                    *impl.mBuffers[i].mBuffer);
-                        }
-                        if (written) {
-                            cmd.BindDescriptorSet(pipeline, *set, 0);
-                            impl.mFrameSets.push_back(std::move(set));
-                        } else {
-                            moe::Error::Set("Draw: descriptor write failed "
-                                    "(binding not declared in the shader?)");
-                            set->Destroy();
-                        }
-                    }
-                }
-            }
+        if (!impl.RecordDraw(cmd, state, program)) {
+            return;
         }
 
         if (mesh != nullptr) {
@@ -931,6 +995,78 @@ namespace moe::neo {
             cmd.Draw(3, 1, 0, 0);
         }
         impl.mStatsDraws += 1;
+    }
+
+    void Renderer::DrawVerticesImmediate(const rhi::Buffer& vertexBuffer, uint32_t vertexCount,
+            const rhi::VertexAttribute* attributes, uint32_t attributeCount, uint32_t stride,
+            const rhi::ShaderProgram& program, rhi::PrimitiveTopology topology,
+            uint32_t firstVertex) {
+        Impl& impl = *mImpl;
+        rhi::CommandList& cmd = *impl.mCmd;
+
+        if (!impl.mPassOpen) {
+            moe::Error::Set("DrawVertices: no active pass");
+            return;
+        }
+        if (vertexCount == 0) {
+            return;
+        }
+
+        const rhi::GraphicsPipelineState state =
+                impl.BuildPipelineState(attributes, attributeCount, stride, program, topology);
+        if (!impl.RecordDraw(cmd, state, program)) {
+            return;
+        }
+
+        cmd.BindVertexBuffer(vertexBuffer, 0);
+        cmd.Draw(vertexCount, 1, firstVertex, 0);
+        if (&vertexBuffer == &impl.mDynamicVertexBuffer) {
+            impl.mDynamicVertexUsed = true;
+        }
+        impl.mStatsDraws += 1;
+    }
+
+    uint32_t Renderer::AppendDynamicVertices(const void* data, uint32_t bytes) {
+        if (data == nullptr || bytes == 0) {
+            return UINT32_MAX;
+        }
+        Impl& impl = *mImpl;
+        const uint32_t offset = static_cast<uint32_t>(impl.mDynamicVertexCpu.size());
+        const uint32_t needed = offset + bytes;
+        if (needed > impl.mDynamicVertexCapacity) {
+            // Growing after a draw referenced the arena would leave that draw
+            // pointing at the old buffer; only grow while nothing has drawn.
+            if (impl.mDynamicVertexUsed) {
+                moe::Error::Set("Renderer: dynamic vertex arena overflow (draw already recorded)");
+                return UINT32_MAX;
+            }
+            const uint32_t capacity = std::max(needed, std::max(impl.mDynamicVertexCapacity * 2,
+                    256u * 1024u));
+            rhi::BufferCreateInfo info{};
+            info.mSize = capacity;
+            info.mUsage = rhi::BufferUsage::kVertex | rhi::BufferUsage::kTransferDst;
+            impl.mDynamicVertexBuffer.Destroy();
+            if (!impl.mDevice->CreateBuffer(info, impl.mDynamicVertexBuffer)) {
+                moe::Error::Set("Renderer: dynamic vertex buffer: " + moe::Error::Get());
+                return UINT32_MAX;
+            }
+            impl.mDynamicVertexCapacity = capacity;
+        }
+        impl.mDynamicVertexCpu.resize(needed);
+        std::memcpy(impl.mDynamicVertexCpu.data() + offset, data, bytes);
+        return offset;
+    }
+
+    const rhi::Buffer& Renderer::GetDynamicVertexBufferInternal() const {
+        return mImpl->mDynamicVertexBuffer;
+    }
+
+    glm::vec2 Renderer::GetViewportSizeInternal() const {
+        if (mImpl->mTargetPtr != nullptr) {
+            return {static_cast<float>(mImpl->mTargetPtr->mWidth),
+                    static_cast<float>(mImpl->mTargetPtr->mHeight)};
+        }
+        return {static_cast<float>(mImpl->mFrameWidth), static_cast<float>(mImpl->mFrameHeight)};
     }
 
     // ---- PassContext: forwards to the renderer's internals ----
@@ -979,6 +1115,14 @@ namespace moe::neo {
     void PassContext::Draw(const UploadedMesh& mesh, const rhi::ShaderProgram& program,
             rhi::PrimitiveTopology topology, uint32_t instanceCount) {
         mRenderer->DrawImmediate(&mesh, program, topology, instanceCount);
+    }
+
+    void PassContext::DrawVertices(const rhi::Buffer& vertexBuffer, uint32_t vertexCount,
+            const rhi::VertexAttribute* attributes, uint32_t attributeCount, uint32_t stride,
+            const rhi::ShaderProgram& program, rhi::PrimitiveTopology topology,
+            uint32_t firstVertex) {
+        mRenderer->DrawVerticesImmediate(vertexBuffer, vertexCount, attributes, attributeCount,
+                stride, program, topology, firstVertex);
     }
 
     void PassContext::DrawFullscreen(const rhi::ShaderProgram& program) {

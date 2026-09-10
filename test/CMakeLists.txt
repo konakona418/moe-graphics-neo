@@ -205,3 +205,16 @@ if(TARGET moe-shaders)
 endif()
 
 add_test(NAME rhi-bindless-smoke COMMAND moe-rhi-bindless-smoke)
+add_executable(moe-neo-font-smoke
+  FontSmoke.cpp
+)
+
+target_link_libraries(moe-neo-font-smoke PRIVATE
+  moe-neo
+)
+
+target_compile_definitions(moe-neo-font-smoke PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME neo-font-smoke COMMAND moe-neo-font-smoke)

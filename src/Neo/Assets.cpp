@@ -178,6 +178,8 @@ namespace moe::neo {
         mModels.Clear();
         mTextures.ForEach([](UploadedTexture& texture) { texture.Destroy(); });
         mTextures.Clear();
+        mFonts.ForEach([](FontData& font) { font.Destroy(); });
+        mFonts.Clear();
         mPrograms.Clear();
         mShaders.Clear();
         mDevice = nullptr;

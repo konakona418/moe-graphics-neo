@@ -87,15 +87,30 @@ namespace moe::neo {
 
         // Uploads raw bytes into a device-local buffer (e.g. instance data).
         // The buffer is created with the given usage plus TransferDst.
+        // `dstStage`/`dstAccess` describe the first shader use, so the
+        // transfer->read barrier targets the right stage (e.g. pass
+        // kFragmentShader for a storage buffer read by a fragment shader).
         bool UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
-                rhi::Buffer& out);
+                rhi::Buffer& out,
+                rhi::PipelineStage dstStage = rhi::PipelineStage::kVertexShader,
+                rhi::Access dstAccess = rhi::Access::kShaderRead);
+
+        // Overwrites the start of an existing device-local buffer through a
+        // staging copy. Waits for completion, so the data is ready for the
+        // next recorded draw (safe to call while a render pass is open: the
+        // transfer and its barrier live in their own submission).
+        bool UpdateBuffer(const rhi::Buffer& dst, const void* data, size_t byteCount,
+                rhi::PipelineStage dstStage = rhi::PipelineStage::kVertexInput,
+                rhi::Access dstAccess = rhi::Access::kVertexAttributeRead);
 
     private:
         // Shared staging plumbing: a host-visible transfer-source buffer, and
         // staging->buffer copy + barrier + submit.
         bool CreateStagingBuffer(size_t size, rhi::Buffer& out);
         bool UploadBytes(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
-                bool waitForCompletion);
+                bool waitForCompletion,
+                rhi::PipelineStage dstStage = rhi::PipelineStage::kVertexShader,
+                rhi::Access dstAccess = rhi::Access::kShaderRead);
         // Creates the vertex/index buffers and uploads packed data through a
         // single staging buffer.
         bool UploadMeshData(const std::vector<uint8_t>& vertexData,

@@ -139,3 +139,19 @@ target_compile_definitions(moe-example-halftone PRIVATE
 if(TARGET moe-shaders)
     add_dependencies(moe-example-halftone moe-shaders)
 endif()
+
+add_executable(moe-example-text
+  text/main.cpp
+)
+
+target_link_libraries(moe-example-text PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-text PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-text moe-shaders)
+endif()
