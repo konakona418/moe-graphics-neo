@@ -59,18 +59,25 @@ namespace moe::neo {
     // managed by a Cache keyed by RenderTargetHandle (stale handles resolve
     // to null). The target's color/depth images can be sampled in later
     // passes (pass mImage/mDepthImage to BindImage). Layout transitions for
-    // the attachment/sampling cycle are handled internally.
+    // the attachment/sampling cycle are handled internally. With MSAA the
+    // pass renders into mMsaaImage and resolves into the sampleable mImage.
     struct RenderTarget {
-        std::unique_ptr<rhi::Image> mImage;
+        std::unique_ptr<rhi::Image> mImage;      // single-sample, sampleable (resolve target when MS)
+        std::unique_ptr<rhi::Image> mMsaaImage;  // valid when mSampleCount > 1 (render attachment)
         std::unique_ptr<rhi::Image> mDepthImage; // valid when mHasDepth
         rhi::Format mFormat{rhi::Format::kR8G8B8A8Unorm};
         uint32_t mWidth{0};
         uint32_t mHeight{0};
+        uint32_t mSampleCount{1};
         bool mHasDepth{false};
 
         // Internal barrier bookkeeping (read-only for users).
         rhi::ImageLayout mColorLayout{rhi::ImageLayout::kUndefined};
+        rhi::ImageLayout mResolveLayout{rhi::ImageLayout::kUndefined};
         rhi::ImageLayout mDepthLayout{rhi::ImageLayout::kUndefined};
+
+        // The image a pass renders into (multisampled when MSAA is on).
+        rhi::Image& AttachmentImage() { return mMsaaImage ? *mMsaaImage : *mImage; }
     };
 
     using RenderTargetHandle = Handle<RenderTarget>;
@@ -190,7 +197,7 @@ namespace moe::neo {
         Renderer& operator=(const Renderer&) = delete;
 
         bool Init(rhi::Device& device, rhi::DefaultPipelineCache& cache,
-                uint32_t width, uint32_t height);
+                uint32_t width, uint32_t height, uint32_t sampleCount = 1);
         void Destroy();
 
         // Begins a frame; `frame` is the current swapchain image (acquired
@@ -249,10 +256,16 @@ namespace moe::neo {
 
         // ---- render targets ----
 
+        // Render targets default to the renderer's MSAA level; pass sampleCount
+        // (1/2/4/8) to override it for this target (e.g. a 1x normal prepass
+        // whose edges must stay crisp). 0 = renderer default.
         RenderTargetHandle CreateRenderTarget(uint32_t width, uint32_t height,
-                rhi::Format format, bool withDepth);
+                rhi::Format format, bool withDepth, uint32_t sampleCount = 0);
         void DestroyRenderTarget(RenderTargetHandle handle);
         RenderTarget* GetRenderTarget(RenderTargetHandle handle);
+
+        // MSAA level of this renderer (1 = off).
+        uint32_t GetSampleCount() const;
 
     private:
         friend class PassContext;

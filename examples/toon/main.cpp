@@ -22,33 +22,41 @@
 namespace {
     // Mœbius-style toon demo with hand-drawn "boiling" ink:
     //   pass 1: scene (toon / toon_spec per material) -> scene target
-    //   pass 2: inverted-hull outline -> outline target, borrowing the scene
-    //           depth so the hull is occluded by the scene
-    //   pass 3: composite: sample the outline with a 4-frame noise jitter
-    //           (animated on twos) and blend it over the scene
+    //   pass 2: normal+depth prepass -> 1x target (outline source)
+    //   pass 3: screen-space ink: silhouettes/creases from the prepass,
+    //           dilated to a constant pixel width and wobbled by a seamless
+    //           noise field (animated on twos), over the resolved scene
     struct ToonData {
         moe::neo::Renderer mRenderer;
         moe::neo::SwapchainImage mFrame;
         moe::neo::Model mModel;
         moe::neo::ProgramHandle mToonProgram;
         moe::neo::ProgramHandle mToonSpecProgram;
-        moe::neo::ProgramHandle mOutlineProgram;
+        moe::neo::ProgramHandle mNormalProgram;
         moe::neo::ProgramHandle mCompositeProgram;
         moe::neo::TextureHandle mNoiseAtlas;
         moe::neo::RenderTargetHandle mSceneTarget;
-        moe::neo::RenderTargetHandle mOutlineTarget;
+        moe::neo::RenderTargetHandle mNormalTarget;
         int32_t mCompositeResolution{-1};
         int32_t mCompositeAmplitude{-1};
         int32_t mCompositeNoiseFrame{-1};
         int32_t mCompositeNoiseScale{-1};
+        int32_t mCompositeLineWidth{-1};
+        int32_t mCompositeNormalThreshold{-1};
+        int32_t mCompositeDepthThreshold{-1};
+        int32_t mCompositeInkColor{-1};
         float mTime{0.0f};
         float mNoiseFrame{0.0f};
         float mSteps{3.0f};
         float mRim{0.25f};
         float mSpecStrength{0.15f};
-        float mOutlineWidth{0.02f};
-        float mJitterAmplitude{1.5f};
-        float mNoiseScale{8.0f};
+        float mInkWidth{2.5f};
+        float mJitterAmplitude{1.0f};
+        float mNoiseScale{4.0f};
+        float mInkRate{10.0f};
+        float mNormalThreshold{0.35f};
+        float mDepthThreshold{0.08f};
+        float mInkColor[4] = {0.10f, 0.09f, 0.12f, 1.0f};
         bool mOutlineEnabled{true};
     };
 
@@ -179,8 +187,14 @@ namespace {
         return mesh;
     }
 
-    // 2x2 atlas of 4 smoothed value-noise tiles (rg = jitter offset).
+    // 2x2 atlas of 4 temporally-coherent slices of a seamless 3D value noise
+    // (rg = jitter offset). x/y wrap, so the screen-space tiling has no seams,
+    // and z advances smoothly per tile, so the "boiling" reads as an evolving
+    // wobble instead of four unrelated patterns.
     moe::neo::Texture MakeNoiseAtlas(uint32_t tileSize, uint32_t gridSize) {
+        constexpr uint32_t kZGrid = 5;  // slices along z (4 frames + interpolation)
+        constexpr float kZStep = 0.7f;  // how far apart consecutive frames sit
+
         moe::neo::Texture texture;
         texture.mName = "toon_noise_atlas";
         texture.mWidth = tileSize * 2;
@@ -191,27 +205,42 @@ namespace {
 
         std::mt19937 rng(1234);
         std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+        std::vector<glm::vec2> grid(static_cast<size_t>(kZGrid) * gridSize * gridSize);
+        for (glm::vec2& value : grid) {
+            value = {dist(rng), dist(rng)};
+        }
+        const auto sampleGrid = [&](uint32_t x, uint32_t y, uint32_t z) {
+            return grid[(static_cast<size_t>(z) * gridSize + (y % gridSize)) * gridSize
+                    + (x % gridSize)];
+        };
+        const auto quintic = [](float t) {
+            return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+        };
+
         for (uint32_t tile = 0; tile < 4; ++tile) {
-            std::vector<glm::vec2> grid(static_cast<size_t>(gridSize + 1) * (gridSize + 1));
-            for (glm::vec2& value : grid) {
-                value = {dist(rng), dist(rng)};
-            }
+            const float fz = static_cast<float>(tile) * kZStep;
+            const uint32_t z0 = static_cast<uint32_t>(fz);
+            const float tz = quintic(fz - static_cast<float>(z0));
             const uint32_t tileX = (tile % 2) * tileSize;
             const uint32_t tileY = (tile / 2) * tileSize;
             for (uint32_t y = 0; y < tileSize; ++y) {
                 const float fy = static_cast<float>(y) / static_cast<float>(tileSize) * gridSize;
                 const uint32_t y0 = static_cast<uint32_t>(fy);
-                const float ty = fy - static_cast<float>(y0);
+                const float ty = quintic(fy - static_cast<float>(y0));
                 for (uint32_t x = 0; x < tileSize; ++x) {
                     const float fx = static_cast<float>(x) / static_cast<float>(tileSize) * gridSize;
                     const uint32_t x0 = static_cast<uint32_t>(fx);
-                    const float tx = fx - static_cast<float>(x0);
-                    const glm::vec2 v00 = grid[y0 * (gridSize + 1) + x0];
-                    const glm::vec2 v10 = grid[y0 * (gridSize + 1) + x0 + 1];
-                    const glm::vec2 v01 = grid[(y0 + 1) * (gridSize + 1) + x0];
-                    const glm::vec2 v11 = grid[(y0 + 1) * (gridSize + 1) + x0 + 1];
-                    const glm::vec2 value = glm::mix(glm::mix(v00, v10, tx),
-                            glm::mix(v01, v11, tx), ty);
+                    const float tx = quintic(fx - static_cast<float>(x0));
+                    glm::vec2 value(0.0f);
+                    for (uint32_t dz = 0; dz < 2; ++dz) {
+                        const glm::vec2 v00 = sampleGrid(x0, y0, z0 + dz);
+                        const glm::vec2 v10 = sampleGrid(x0 + 1, y0, z0 + dz);
+                        const glm::vec2 v01 = sampleGrid(x0, y0 + 1, z0 + dz);
+                        const glm::vec2 v11 = sampleGrid(x0 + 1, y0 + 1, z0 + dz);
+                        const glm::vec2 slice = glm::mix(glm::mix(v00, v10, tx),
+                                glm::mix(v01, v11, tx), ty);
+                        value = dz == 0 ? slice : glm::mix(value, slice, tz);
+                    }
                     const size_t i = (static_cast<size_t>(tileY + y) * texture.mWidth
                             + (tileX + x)) * 4;
                     texture.mData[i + 0] = static_cast<uint8_t>(
@@ -249,9 +278,6 @@ namespace {
             data.mModel.SetMaterialParam(name, "steps", data.mSteps);
             data.mModel.SetMaterialParam(name, "rimStrength", data.mRim);
             data.mModel.SetMaterialParam(name, "specStrength", data.mSpecStrength);
-            data.mModel.SetMaterialParam(name, "outlineWidth", data.mOutlineWidth);
-            data.mModel.SetMaterialParam(name, "outlineColor",
-                    glm::vec4(0.10f, 0.09f, 0.12f, 1.0f));
         }
     }
 
@@ -272,9 +298,9 @@ namespace {
         for (uint32_t i = 0; i < scene.mMeshes.size(); ++i) {
             scene.mMeshes[i].mPrimitives[0].mMaterialIndex = static_cast<int32_t>(i);
         }
-        AddNode(scene, 0, {-1.7f, 1.0f, 0.0f});
+        AddNode(scene, 0, {-2.6f, 1.0f, 0.0f});
         AddNode(scene, 1, {0.0f, 1.15f, 0.0f});
-        AddNode(scene, 2, {1.8f, 0.7f, 0.0f});
+        AddNode(scene, 2, {2.6f, 0.7f, 0.0f});
         AddNode(scene, 3, {0.0f, 0.0f, 0.0f});
 
         data->mModel = ctx.mAssets.UploadScene(scene);
@@ -290,14 +316,14 @@ namespace {
         data->mToonSpecProgram = ctx.mAssets.LoadGraphicsProgram(
                 (std::string(shaderDir) + "toon_spec.vert.spv").c_str(),
                 (std::string(shaderDir) + "toon_spec.frag.spv").c_str());
-        data->mOutlineProgram = ctx.mAssets.LoadGraphicsProgram(
-                (std::string(shaderDir) + "toon_outline.vert.spv").c_str(),
-                (std::string(shaderDir) + "toon_outline.frag.spv").c_str());
+        data->mNormalProgram = ctx.mAssets.LoadGraphicsProgram(
+                (std::string(shaderDir) + "toon_normal.vert.spv").c_str(),
+                (std::string(shaderDir) + "toon_normal.frag.spv").c_str());
         data->mCompositeProgram = ctx.mAssets.LoadGraphicsProgram(
                 (std::string(shaderDir) + "toon_composite.vert.spv").c_str(),
                 (std::string(shaderDir) + "toon_composite.frag.spv").c_str());
         if (!data->mToonProgram.IsValid() || !data->mToonSpecProgram.IsValid()
-                || !data->mOutlineProgram.IsValid() || !data->mCompositeProgram.IsValid()) {
+                || !data->mNormalProgram.IsValid() || !data->mCompositeProgram.IsValid()) {
             std::fprintf(stderr, "toon: shader load: %s\n", moe::Error::Get().c_str());
             return false;
         }
@@ -313,17 +339,18 @@ namespace {
         ApplyMaterialParams(*data);
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight())) {
+                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
             std::fprintf(stderr, "toon: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }
         data->mSceneTarget = data->mRenderer.CreateRenderTarget(
                 ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(),
                 moe::rhi::Format::kR8G8B8A8Unorm, true);
-        data->mOutlineTarget = data->mRenderer.CreateRenderTarget(
+        // outline source: single-sample so silhouettes stay crisp
+        data->mNormalTarget = data->mRenderer.CreateRenderTarget(
                 ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(),
-                moe::rhi::Format::kR8G8B8A8Unorm, false);
-        if (!data->mSceneTarget.IsValid() || !data->mOutlineTarget.IsValid()) {
+                moe::rhi::Format::kR16G16B16A16Float, true, 1);
+        if (!data->mSceneTarget.IsValid() || !data->mNormalTarget.IsValid()) {
             std::fprintf(stderr, "toon: render targets: %s\n", moe::Error::Get().c_str());
             return false;
         }
@@ -333,24 +360,27 @@ namespace {
         data->mCompositeAmplitude = data->mRenderer.GetPushConstant(*composite, "amplitude");
         data->mCompositeNoiseFrame = data->mRenderer.GetPushConstant(*composite, "noiseFrame");
         data->mCompositeNoiseScale = data->mRenderer.GetPushConstant(*composite, "noiseScale");
+        data->mCompositeLineWidth = data->mRenderer.GetPushConstant(*composite, "lineWidth");
+        data->mCompositeNormalThreshold = data->mRenderer.GetPushConstant(*composite, "normalThreshold");
+        data->mCompositeDepthThreshold = data->mRenderer.GetPushConstant(*composite, "depthThreshold");
+        data->mCompositeInkColor = data->mRenderer.GetPushConstant(*composite, "inkColor");
         if (data->mCompositeResolution < 0 || data->mCompositeAmplitude < 0
-                || data->mCompositeNoiseFrame < 0 || data->mCompositeNoiseScale < 0) {
+                || data->mCompositeNoiseFrame < 0 || data->mCompositeNoiseScale < 0
+                || data->mCompositeLineWidth < 0 || data->mCompositeNormalThreshold < 0
+                || data->mCompositeDepthThreshold < 0 || data->mCompositeInkColor < 0) {
             std::fprintf(stderr, "toon: composite push constant names mismatch\n");
             return false;
         }
         return true;
     }
 
-    void Render(void*, examples::AppContext&, moe::rhi::CommandList&) {}
-
     void PostRender(void* userdata, examples::AppContext& ctx, moe::rhi::CommandList& cmd) {
         auto* data = static_cast<ToonData*>(userdata);
         data->mTime += 0.016f;
-        // "on twos": 12 noise frames per second, cycling through the 4 tiles
-        data->mNoiseFrame = std::fmod(std::floor(data->mTime * 12.0f), 4.0f);
+        // "on twos": noise frames per second, cycling through the 4 tiles
+        data->mNoiseFrame = std::fmod(std::floor(data->mTime * data->mInkRate), 4.0f);
 
-        // alpha 0: the outline target's untouched pixels are "no ink"
-        const float clear[4] = {0.90f, 0.88f, 0.84f, 0.0f};
+        const float clear[4] = {0.90f, 0.88f, 0.84f, 1.0f};
         if (!data->mFrame.Acquire(ctx.mSwapchain)) {
             return;
         }
@@ -376,32 +406,24 @@ namespace {
             context.DrawModel(data->mModel, data->mToonProgram, identity);
         });
 
-        // pass 2: outline into its own attachment, borrowing the scene depth
-        // (loaded, not cleared) so the hull is occluded by the scene; depth
-        // writes stay off so the scene depth survives the pass
-        const moe::neo::PassDesc outlinePass{"toon outline",
-                moe::neo::ColorAttachment(data->mOutlineTarget),
-                moe::neo::DepthAttachment(data->mSceneTarget)};
-        data->mRenderer.Execute(outlinePass, [&](moe::neo::PassContext& context) {
+        // pass 2: normal+depth prepass for the screen-space ink (1x target,
+        // its own depth so only the visible surface is recorded)
+        const moe::neo::PassDesc normalPass{"toon normal",
+                moe::neo::ColorAttachment(data->mNormalTarget), {}};
+        data->mRenderer.Execute(normalPass, [&](moe::neo::PassContext& context) {
             context.SetCamera(camera);
-            if (data->mOutlineEnabled) {
-                moe::neo::DrawState state;
-                state.mCullMode = moe::rhi::CullMode::kFront; // inverted hull
-                state.mDepthWrite = false;
-                context.SetState(state);
-                context.DrawModelForced(data->mModel, data->mOutlineProgram, identity);
-            }
+            context.DrawModelForced(data->mModel, data->mNormalProgram, identity);
         });
 
-        // pass 3: composite: jittered outline over the scene
-        const moe::neo::PassDesc compositePass{"toon composite", {}, {}};
+        // pass 3: ink: silhouette/crease detection over the scene
+        const moe::neo::PassDesc compositePass{"toon ink", {}, {}};
         data->mRenderer.Execute(compositePass, [&](moe::neo::PassContext& context) {
             moe::neo::UploadedTexture* noise = ctx.mAssets.GetTexture(data->mNoiseAtlas);
             moe::neo::RenderTarget* scene = data->mRenderer.GetRenderTarget(data->mSceneTarget);
-            moe::neo::RenderTarget* outline = data->mRenderer.GetRenderTarget(data->mOutlineTarget);
+            moe::neo::RenderTarget* normal = data->mRenderer.GetRenderTarget(data->mNormalTarget);
             context.BindImage(0, *scene->mImage);
             context.BindSampler(1, noise->mSampler);
-            context.BindImage(2, *outline->mImage);
+            context.BindImage(2, *normal->mImage);
             context.BindSampler(3, noise->mSampler);
             context.BindImage(4, noise->mImage);
             context.BindSampler(5, noise->mSampler);
@@ -409,6 +431,9 @@ namespace {
             const float resolution[2] = {
                     static_cast<float>(data->mFrame.GetWidth()),
                     static_cast<float>(data->mFrame.GetHeight())};
+            const float inkColor[4] = {
+                    data->mInkColor[0], data->mInkColor[1], data->mInkColor[2],
+                    data->mOutlineEnabled ? data->mInkColor[3] : 0.0f};
             context.SetPushConstant(data->mCompositeResolution, resolution, sizeof(resolution));
             context.SetPushConstant(data->mCompositeAmplitude, &data->mJitterAmplitude,
                     sizeof(data->mJitterAmplitude));
@@ -416,6 +441,13 @@ namespace {
                     sizeof(data->mNoiseFrame));
             context.SetPushConstant(data->mCompositeNoiseScale, &data->mNoiseScale,
                     sizeof(data->mNoiseScale));
+            context.SetPushConstant(data->mCompositeLineWidth, &data->mInkWidth,
+                    sizeof(data->mInkWidth));
+            context.SetPushConstant(data->mCompositeNormalThreshold, &data->mNormalThreshold,
+                    sizeof(data->mNormalThreshold));
+            context.SetPushConstant(data->mCompositeDepthThreshold, &data->mDepthThreshold,
+                    sizeof(data->mDepthThreshold));
+            context.SetPushConstant(data->mCompositeInkColor, inkColor, sizeof(inkColor));
             context.DrawFullscreen(*ctx.mAssets.GetProgram(data->mCompositeProgram));
         });
 
@@ -431,19 +463,24 @@ namespace {
         changed |= ImGui::SliderFloat("steps", &data->mSteps, 1.0f, 6.0f);
         changed |= ImGui::SliderFloat("rim", &data->mRim, 0.0f, 1.0f);
         changed |= ImGui::SliderFloat("spec", &data->mSpecStrength, 0.0f, 0.5f);
-        changed |= ImGui::SliderFloat("outline width", &data->mOutlineWidth, 0.0f, 0.08f);
-        ImGui::Checkbox("outline", &data->mOutlineEnabled);
-        ImGui::SliderFloat("ink jitter (px)", &data->mJitterAmplitude, 0.0f, 4.0f);
-        ImGui::SliderFloat("ink scale", &data->mNoiseScale, 2.0f, 20.0f);
         if (changed) {
             ApplyMaterialParams(*data);
         }
+        ImGui::Separator();
+        ImGui::Checkbox("ink", &data->mOutlineEnabled);
+        ImGui::ColorEdit4("ink color", data->mInkColor);
+        ImGui::SliderFloat("ink width (px)", &data->mInkWidth, 0.5f, 6.0f);
+        ImGui::SliderFloat("ink jitter (px)", &data->mJitterAmplitude, 0.0f, 4.0f);
+        ImGui::SliderFloat("ink scale", &data->mNoiseScale, 1.0f, 12.0f);
+        ImGui::SliderFloat("ink rate (Hz)", &data->mInkRate, 0.0f, 24.0f);
+        ImGui::SliderFloat("crease threshold", &data->mNormalThreshold, 0.05f, 0.9f);
+        ImGui::SliderFloat("depth threshold", &data->mDepthThreshold, 0.01f, 0.5f);
         ImGui::End();
     }
 
     void Shutdown(void* userdata, examples::AppContext&) {
         auto* data = static_cast<ToonData*>(userdata);
-        data->mRenderer.DestroyRenderTarget(data->mOutlineTarget);
+        data->mRenderer.DestroyRenderTarget(data->mNormalTarget);
         data->mRenderer.DestroyRenderTarget(data->mSceneTarget);
         data->mRenderer.Destroy();
     }
@@ -453,7 +490,6 @@ int main() {
     ToonData data;
     examples::AppCallbacks callbacks{};
     callbacks.mSetup = Setup;
-    callbacks.mRender = Render;
     callbacks.mPostRender = PostRender;
     callbacks.mDrawUI = DrawUI;
     callbacks.mShutdown = Shutdown;

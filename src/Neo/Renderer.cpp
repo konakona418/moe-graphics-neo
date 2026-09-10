@@ -39,6 +39,7 @@ namespace moe::neo {
         rhi::Image mDepthImage;
         uint32_t mWidth{0};
         uint32_t mHeight{0};
+        uint32_t mSampleCount{1};
 
         // push constant name registry (lookup-once, then set by index). Each
         // field keeps its own value: different programs may place fields at
@@ -149,22 +150,53 @@ namespace moe::neo {
 
         // Transitions a target's color image to ColorAttachment. The tracked
         // layout is the barrier source, so chained passes stay synchronized.
+        // Multisampled attachments stay in ColorAttachment between passes, so
+        // an already-attached image still gets a dependency barrier.
         void EnsureColorAttachment(RenderTarget& target) {
-            if (target.mColorLayout == rhi::ImageLayout::kColorAttachment) {
+            const bool already = target.mColorLayout == rhi::ImageLayout::kColorAttachment;
+            if (already && target.mSampleCount == 1) {
                 return;
             }
             rhi::SyncInfo sync{};
-            sync.mSrcStage = target.mColorLayout == rhi::ImageLayout::kShaderReadOnly
+            if (already) {
+                sync.mSrcStage = rhi::PipelineStage::kColorAttachmentOutput;
+                sync.mSrcAccess = rhi::Access::kColorAttachmentWrite;
+            } else if (target.mColorLayout == rhi::ImageLayout::kShaderReadOnly) {
+                sync.mSrcStage = rhi::PipelineStage::kFragmentShader;
+                sync.mSrcAccess = rhi::Access::kShaderRead;
+            } else {
+                sync.mSrcStage = rhi::PipelineStage::kTopOfPipe;
+                sync.mSrcAccess = rhi::Access::kNone;
+            }
+            sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
+            sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
+            mCmd->ImageBarrier(target.AttachmentImage(), target.mColorLayout,
+                    rhi::ImageLayout::kColorAttachment, sync);
+            target.mColorLayout = rhi::ImageLayout::kColorAttachment;
+        }
+
+        // Transitions a target's resolve image (mImage) to ColorAttachment
+        // before a multisampled pass resolves into it.
+        void EnsureResolveAttachment(RenderTarget& target) {
+            if (target.mSampleCount == 1) {
+                return;
+            }
+            const bool already = target.mResolveLayout == rhi::ImageLayout::kColorAttachment;
+            if (already) {
+                return;
+            }
+            rhi::SyncInfo sync{};
+            sync.mSrcStage = target.mResolveLayout == rhi::ImageLayout::kShaderReadOnly
                     ? rhi::PipelineStage::kFragmentShader
                     : rhi::PipelineStage::kTopOfPipe;
-            sync.mSrcAccess = target.mColorLayout == rhi::ImageLayout::kShaderReadOnly
+            sync.mSrcAccess = target.mResolveLayout == rhi::ImageLayout::kShaderReadOnly
                     ? rhi::Access::kShaderRead
                     : rhi::Access::kNone;
             sync.mDstStage = rhi::PipelineStage::kColorAttachmentOutput;
             sync.mDstAccess = rhi::Access::kColorAttachmentWrite;
-            mCmd->ImageBarrier(*target.mImage, target.mColorLayout,
+            mCmd->ImageBarrier(*target.mImage, target.mResolveLayout,
                     rhi::ImageLayout::kColorAttachment, sync);
-            target.mColorLayout = rhi::ImageLayout::kColorAttachment;
+            target.mResolveLayout = rhi::ImageLayout::kColorAttachment;
         }
 
         // Same for a target's depth image (no-op when the target has none).
@@ -258,6 +290,8 @@ namespace moe::neo {
             state.mColorFormats[0] =
                     mTargetPtr != nullptr ? mTargetPtr->mFormat : mSwapchainFormat;
             state.mDepthFormat = rhi::Format::kD32Float;
+            state.mMultisample.mSampleCount = static_cast<uint8_t>(
+                    mTargetPtr != nullptr ? mTargetPtr->mSampleCount : mSampleCount);
 
             state.mBlendAttachmentCount = 1;
             state.mBlendAttachments[0].mBlendEnabled = mState.mBlendEnabled;
@@ -325,14 +359,21 @@ namespace moe::neo {
     Renderer::~Renderer() = default;
 
     bool Renderer::Init(rhi::Device& device, rhi::DefaultPipelineCache& cache,
-            uint32_t width, uint32_t height) {
+            uint32_t width, uint32_t height, uint32_t sampleCount) {
         if (mImpl->mDevice != nullptr) {
             return moe::Fail("Renderer already initialized");
+        }
+        if (sampleCount != 1 && sampleCount != 2 && sampleCount != 4 && sampleCount != 8) {
+            return moe::Fail("Renderer: sample count must be 1, 2, 4 or 8");
+        }
+        if (sampleCount > device.GetMaxSampleCount()) {
+            return moe::Fail("Renderer: sample count exceeds device support");
         }
         mImpl->mDevice = &device;
         mImpl->mCache = &cache;
         mImpl->mWidth = width;
         mImpl->mHeight = height;
+        mImpl->mSampleCount = sampleCount;
 
         rhi::ImageCreateInfo depthInfo{};
         depthInfo.mType = rhi::ImageType::k2D;
@@ -340,12 +381,17 @@ namespace moe::neo {
         depthInfo.mHeight = height;
         depthInfo.mFormat = rhi::Format::kD32Float;
         depthInfo.mUsage = rhi::ImageUsage::kDepthAttachment;
+        depthInfo.mSampleCount = sampleCount;
         if (!device.CreateImage(depthInfo, mImpl->mDepthImage)) {
             mImpl->mDevice = nullptr;
             return moe::Fail("Renderer: depth image: " + moe::Error::Get());
         }
         mImpl->mStatsTime = std::chrono::steady_clock::now();
-        moe::Logger::info("Renderer initialized ({}x{})", width, height);
+        if (sampleCount > 1) {
+            moe::Logger::info("Renderer initialized ({}x{}, {}x MSAA)", width, height, sampleCount);
+        } else {
+            moe::Logger::info("Renderer initialized ({}x{})", width, height);
+        }
         return true;
     }
 
@@ -360,6 +406,9 @@ namespace moe::neo {
         mImpl->mTargets.ForEach([](RenderTarget& target) {
             if (target.mDepthImage) {
                 target.mDepthImage->Destroy();
+            }
+            if (target.mMsaaImage) {
+                target.mMsaaImage->Destroy();
             }
             if (target.mImage) {
                 target.mImage->Destroy();
@@ -566,15 +615,25 @@ namespace moe::neo {
     // ---- render targets ----
 
     RenderTargetHandle Renderer::CreateRenderTarget(uint32_t width, uint32_t height,
-            rhi::Format format, bool withDepth) {
+            rhi::Format format, bool withDepth, uint32_t sampleCount) {
         if (width == 0 || height == 0) {
             moe::Error::Set("CreateRenderTarget: zero size");
+            return {};
+        }
+        const uint32_t samples = sampleCount == 0 ? mImpl->mSampleCount : sampleCount;
+        if (samples != 1 && samples != 2 && samples != 4 && samples != 8) {
+            moe::Error::Set("CreateRenderTarget: sample count must be 1, 2, 4 or 8");
+            return {};
+        }
+        if (samples > mImpl->mDevice->GetMaxSampleCount()) {
+            moe::Error::Set("CreateRenderTarget: sample count exceeds device support");
             return {};
         }
         RenderTarget target;
         target.mWidth = width;
         target.mHeight = height;
         target.mFormat = format;
+        target.mSampleCount = samples;
         target.mHasDepth = withDepth;
         target.mImage = std::make_unique<rhi::Image>();
         target.mDepthImage = withDepth ? std::make_unique<rhi::Image>() : nullptr;
@@ -590,6 +649,17 @@ namespace moe::neo {
             moe::Error::Set("CreateRenderTarget: color image: " + moe::Error::Get());
             return {};
         }
+        if (samples > 1) {
+            target.mMsaaImage = std::make_unique<rhi::Image>();
+            rhi::ImageCreateInfo msaaInfo = colorInfo;
+            msaaInfo.mUsage = rhi::ImageUsage::kColorAttachment;
+            msaaInfo.mSampleCount = samples;
+            if (!mImpl->mDevice->CreateImage(msaaInfo, *target.mMsaaImage)) {
+                moe::Error::Set("CreateRenderTarget: multisample image: " + moe::Error::Get());
+                target.mImage->Destroy();
+                return {};
+            }
+        }
         if (withDepth) {
             rhi::ImageCreateInfo depthInfo{};
             depthInfo.mType = rhi::ImageType::k2D;
@@ -597,15 +667,20 @@ namespace moe::neo {
             depthInfo.mHeight = height;
             depthInfo.mFormat = rhi::Format::kD32Float;
             depthInfo.mUsage = rhi::ImageUsage::kDepthAttachment | rhi::ImageUsage::kSampled;
+            depthInfo.mSampleCount = samples;
             if (!mImpl->mDevice->CreateImage(depthInfo, *target.mDepthImage)) {
                 moe::Error::Set("CreateRenderTarget: depth image: " + moe::Error::Get());
+                if (target.mMsaaImage) {
+                    target.mMsaaImage->Destroy();
+                }
                 target.mImage->Destroy();
                 return {};
             }
         }
         const RenderTargetHandle handle = mImpl->mTargets.Add(std::move(target));
-        moe::Logger::info("Renderer created render target ({}x{} {})",
-                width, height, withDepth ? "depth" : "color-only");
+        moe::Logger::info("Renderer created render target ({}x{} {}{})",
+                width, height, withDepth ? "depth" : "color-only",
+                samples > 1 ? " msaa" : "");
         return handle;
     }
 
@@ -621,6 +696,9 @@ namespace moe::neo {
         if (target->mDepthImage) {
             target->mDepthImage->Destroy();
         }
+        if (target->mMsaaImage) {
+            target->mMsaaImage->Destroy();
+        }
         target->mImage->Destroy();
         mImpl->mTargets.Remove(handle);
         moe::Logger::info("Renderer destroyed render target ({}x{} {})",
@@ -629,6 +707,10 @@ namespace moe::neo {
 
     RenderTarget* Renderer::GetRenderTarget(RenderTargetHandle handle) {
         return mImpl->mTargets.Get(handle);
+    }
+
+    uint32_t Renderer::GetSampleCount() const {
+        return mImpl->mSampleCount;
     }
 
     // ---- passes ----
@@ -675,6 +757,7 @@ namespace moe::neo {
         // ---- layout transitions + sync (owner-tracked) ----
         if (colorTarget != nullptr) {
             impl.EnsureColorAttachment(*colorTarget);
+            impl.EnsureResolveAttachment(*colorTarget);
         }
         if (depthTarget != nullptr) {
             impl.EnsureDepthAttachment(*depthTarget);
@@ -687,8 +770,10 @@ namespace moe::neo {
         const rhi::LoadOp depthLoadOp = desc.mDepth.mLoadOp;
 
         if (colorTarget != nullptr) {
-            cmd.BeginRendering(*colorTarget->mImage, impl.mClearColor, depthImage, 1.0f,
-                    desc.mColor.mLoadOp, depthLoadOp);
+            const rhi::Image* resolveImage =
+                    colorTarget->mSampleCount > 1 ? colorTarget->mImage.get() : nullptr;
+            cmd.BeginRendering(colorTarget->AttachmentImage(), impl.mClearColor, depthImage, 1.0f,
+                    desc.mColor.mLoadOp, depthLoadOp, resolveImage);
             cmd.SetViewport(colorTarget->mWidth, colorTarget->mHeight);
         } else {
             // the Swapchain owns its color image's layout state
@@ -731,7 +816,19 @@ namespace moe::neo {
             RenderTarget* target = impl.mCurrentTarget;
             rhi::CommandList& cmd = *impl.mCmd;
             rhi::SyncInfo sync{};
-            if (target->mColorLayout != rhi::ImageLayout::kShaderReadOnly) {
+            if (target->mSampleCount > 1) {
+                // multisampled: the attachment stays in ColorAttachment (it is
+                // never sampled); only the resolved image is handed on
+                if (target->mResolveLayout != rhi::ImageLayout::kShaderReadOnly) {
+                    sync.mSrcStage = rhi::PipelineStage::kColorAttachmentOutput;
+                    sync.mSrcAccess = rhi::Access::kColorAttachmentWrite;
+                    sync.mDstStage = rhi::PipelineStage::kFragmentShader;
+                    sync.mDstAccess = rhi::Access::kShaderRead;
+                    cmd.ImageBarrier(*target->mImage, rhi::ImageLayout::kColorAttachment,
+                            rhi::ImageLayout::kShaderReadOnly, sync);
+                    target->mResolveLayout = rhi::ImageLayout::kShaderReadOnly;
+                }
+            } else if (target->mColorLayout != rhi::ImageLayout::kShaderReadOnly) {
                 sync.mSrcStage = rhi::PipelineStage::kColorAttachmentOutput;
                 sync.mSrcAccess = rhi::Access::kColorAttachmentWrite;
                 sync.mDstStage = rhi::PipelineStage::kFragmentShader;

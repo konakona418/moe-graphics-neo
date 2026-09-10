@@ -229,7 +229,8 @@ namespace {
             std::fprintf(stderr, "forwardplus: forward shader: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, width, height)) {
+        if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, width, height,
+                    ctx.mSampleCount)) {
             std::fprintf(stderr, "forwardplus: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

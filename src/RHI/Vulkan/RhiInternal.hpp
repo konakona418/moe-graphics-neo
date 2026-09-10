@@ -114,6 +114,8 @@ namespace moe::rhi {
         VkDevice mDevice{VK_NULL_HANDLE};
         VkQueue mGraphicsQueue{VK_NULL_HANDLE};
         uint32_t mGraphicsQueueFamily{0};
+        // highest sample count supported for both color and depth attachments
+        uint32_t mMaxSampleCount{1};
         VkCommandPool mCommandPool{VK_NULL_HANDLE};
         VmaAllocator mAllocator{VK_NULL_HANDLE};
         std::vector<DeferredDeletion> mDeferredDeletions;
@@ -180,6 +182,11 @@ namespace moe::rhi {
         // EndRendering keep it in sync so callers never hand-write the
         // PresentSrc <-> ColorAttachment transitions.
         ImageLayout mCurrentLayout{ImageLayout::kUndefined};
+        // Multisampled color image (valid when mSampleCount > 1): passes render
+        // into it and resolve into the acquired swapchain image.
+        Image mMsaaImage;
+        uint32_t mSampleCount{1};
+        ImageLayout mMsaaLayout{ImageLayout::kUndefined};
         DeviceImpl* mDevice{nullptr};
     };
 }// namespace moe::rhi

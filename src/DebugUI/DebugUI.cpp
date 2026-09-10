@@ -26,6 +26,16 @@ namespace moe::ui {
                 default: return VK_FORMAT_UNDEFINED;
             }
         }
+
+        // The ImGui pipeline must match the render pass's sample count.
+        VkSampleCountFlagBits ToVkSampleCount(uint32_t samples) {
+            switch (samples) {
+                case 2: return VK_SAMPLE_COUNT_2_BIT;
+                case 4: return VK_SAMPLE_COUNT_4_BIT;
+                case 8: return VK_SAMPLE_COUNT_8_BIT;
+                default: return VK_SAMPLE_COUNT_1_BIT;
+            }
+        }
     }// namespace
 
     struct DebugUIImpl {
@@ -122,7 +132,7 @@ namespace moe::ui {
         initInfo.DescriptorPool = mImpl->mPool;
         initInfo.MinImageCount = 2;
         initInfo.ImageCount = 2;
-        initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        initInfo.MSAASamples = ToVkSampleCount(swapchain.GetSampleCount());
         initInfo.UseDynamicRendering = true;
         initInfo.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
         initInfo.PipelineRenderingCreateInfo.colorAttachmentCount = 1;

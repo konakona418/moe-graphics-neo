@@ -69,8 +69,11 @@ namespace moe::rhi {
         bool CreateCommandList(CommandList& outCommandList);
         // Creates a present-capable swapchain from an opaque VkSurfaceKHR handle
         // (created by the caller, e.g. neo::Window). The graphics queue is used
-        // for present; the surface must be compatible with it.
-        bool CreateSwapchain(uintptr_t surfaceHandle, uint32_t width, uint32_t height, Swapchain& outSwapchain);
+        // for present; the surface must be compatible with it. sampleCount > 1
+        // makes every swapchain render pass multisampled and resolved into the
+        // presented image.
+        bool CreateSwapchain(uintptr_t surfaceHandle, uint32_t width, uint32_t height,
+                Swapchain& outSwapchain, uint32_t sampleCount = 1);
 
         // Descriptor set allocated from the device's internal pool. The layout
         // must come from a pipeline's GetDescriptorSetLayout.
@@ -89,6 +92,10 @@ namespace moe::rhi {
         // Returns the underlying VkInstance as an opaque handle (used to create
         // a surface via GLFW; requires mEnablePresent).
         bool GetInstanceHandle(uintptr_t& outInstance) const;
+
+        // Highest framebuffer sample count supported for both color and depth
+        // (1, 2, 4 or 8). Renderers clamp their requested MSAA level to this.
+        uint32_t GetMaxSampleCount() const;
 
         // Returns opaque Vulkan handles for integrations that must talk to
         // Vulkan directly (e.g. ImGui). See RhiVulkanHandles.

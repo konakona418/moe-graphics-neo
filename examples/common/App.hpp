@@ -22,6 +22,9 @@ namespace examples {
         moe::ui::Im3dDrawer& mIm3d;
         moe::neo::Input& mInput;
         moe::neo::Assets& mAssets;
+        // Effective MSAA level (clamped to device support); pass it to
+        // neo::Renderer::Init so the renderer and swapchain agree.
+        uint32_t mSampleCount{1};
     };
 
     struct AppCallbacks {
@@ -45,6 +48,9 @@ namespace examples {
         void (*mShutdown)(void* userdata, AppContext& ctx) = nullptr;
         void* mUserdata = nullptr;
         const float* mClearColor = nullptr; // RGBA; nullptr = dark gray
+        // Requested MSAA level (1/2/4/8). The App clamps it to the device's
+        // supported count and exposes the result as AppContext::mSampleCount.
+        uint32_t mSampleCount{4};
     };
 
     // Windowed app: owns device + cache + window + swapchain + frame loop.

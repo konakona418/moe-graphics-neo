@@ -88,7 +88,7 @@ namespace {
         }
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight())) {
+                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
             std::fprintf(stderr, "forward: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }
@@ -104,8 +104,6 @@ namespace {
 
     // The scene is rendered by the Renderer in mPostRender (no render pass
     // active there); the App's swapchain pass stays empty.
-    void Render(void*, examples::AppContext&, moe::rhi::CommandList&) {}
-
     void PostRender(void* userdata, examples::AppContext& ctx, moe::rhi::CommandList& cmd) {
         auto* data = static_cast<ForwardData*>(userdata);
 
@@ -156,7 +154,6 @@ int main() {
     ForwardData data;
     examples::AppCallbacks callbacks{};
     callbacks.mSetup = Setup;
-    callbacks.mRender = Render;
     callbacks.mPostRender = PostRender;
     callbacks.mDrawUI = DrawUI;
     callbacks.mShutdown = Shutdown;

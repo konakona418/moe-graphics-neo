@@ -293,7 +293,7 @@ namespace {
             return false;
         }
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight())) {
+                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
             std::fprintf(stderr, "snow: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

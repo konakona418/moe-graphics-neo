@@ -30,6 +30,18 @@ namespace moe::rhi {
         return VK_FORMAT_UNDEFINED;
     }
 
+    inline VkSampleCountFlagBits ToVkSampleCount(uint32_t samples) {
+        switch (samples) {
+            case 1: return VK_SAMPLE_COUNT_1_BIT;
+            case 2: return VK_SAMPLE_COUNT_2_BIT;
+            case 4: return VK_SAMPLE_COUNT_4_BIT;
+            case 8: return VK_SAMPLE_COUNT_8_BIT;
+            default: break;
+        }
+        MOE_RHI_ASSERT(false, "ToVkSampleCount: unsupported sample count");
+        return VK_SAMPLE_COUNT_1_BIT;
+    }
+
     inline VkDescriptorType ToVkDescriptorType(DescriptorType type) {
         switch (type) {
             case DescriptorType::kUniformBuffer: return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;

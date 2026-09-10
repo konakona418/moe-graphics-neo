@@ -78,7 +78,7 @@ namespace moe::ui {
     }
 
     bool Im3dDrawer::Init(moe::rhi::Device& device, moe::rhi::DefaultPipelineCache& cache,
-            moe::rhi::Swapchain& swapchain) {
+            moe::rhi::Swapchain& swapchain, uint32_t sampleCount) {
         mImpl = std::make_unique<Im3dDrawerImpl>();
 
         struct ShaderPaths {
@@ -138,6 +138,7 @@ namespace moe::ui {
             state.mDepthFormat = moe::rhi::Format::kD32Float;
             state.mColorFormatCount = 1;
             state.mColorFormats[0] = swapchain.GetFormat();
+            state.mMultisample.mSampleCount = static_cast<uint8_t>(sampleCount);
             if (!device.GetOrCreateGraphicsPipeline(state, outPipelines[i]->mPipeline)) {
                 mImpl.reset();
                 return moe::Fail("Im3d pipeline: " + moe::Error::Get());

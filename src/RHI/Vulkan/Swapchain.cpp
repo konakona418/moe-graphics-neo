@@ -27,6 +27,9 @@ namespace moe::rhi {
             }
             vkDestroySwapchainKHR(mImpl->mDevice->mDevice, mImpl->mSwapchain, nullptr);
         }
+        if (mImpl) {
+            mImpl->mMsaaImage.Destroy();
+        }
         mImpl.reset();
     }
 
@@ -55,7 +58,9 @@ namespace moe::rhi {
         }
 
         // current layout (Undefined after acquire, PresentSrc after a
-        // previous EndRendering) -> color attachment
+        // previous EndRendering) -> color attachment. When multisampled this
+        // image is the resolve target, so it must be in ColorAttachment layout
+        // as well.
         SyncInfo toColor{};
         toColor.mSrcStage = mImpl->mCurrentLayout == ImageLayout::kPresentSrc
                 ? PipelineStage::kBottomOfPipe
@@ -68,15 +73,41 @@ namespace moe::rhi {
                 mImpl->mCurrentLayout, ImageLayout::kColorAttachment, toColor);
         mImpl->mCurrentLayout = ImageLayout::kColorAttachment;
 
+        // multisampled rendering: draw into the internal MS image and resolve
+        // into the swapchain image at the end of the pass
+        const bool msaa = mImpl->mSampleCount > 1 && mImpl->mMsaaImage.mImpl != nullptr;
+        if (msaa) {
+            SyncInfo toMsaa{};
+            toMsaa.mSrcStage = mImpl->mMsaaLayout == ImageLayout::kColorAttachment
+                    ? PipelineStage::kColorAttachmentOutput
+                    : PipelineStage::kTopOfPipe;
+            toMsaa.mSrcAccess = mImpl->mMsaaLayout == ImageLayout::kColorAttachment
+                    ? Access::kColorAttachmentWrite
+                    : Access::kNone;
+            toMsaa.mDstStage = PipelineStage::kColorAttachmentOutput;
+            toMsaa.mDstAccess = Access::kColorAttachmentWrite;
+            RecordImageBarrier(cmd.mImpl->mCommandBuffer, mImpl->mMsaaImage.mImpl->mImage,
+                    VK_IMAGE_ASPECT_COLOR_BIT, 1, 1,
+                    mImpl->mMsaaLayout, ImageLayout::kColorAttachment, toMsaa);
+            mImpl->mMsaaLayout = ImageLayout::kColorAttachment;
+        }
+
         VkRenderingAttachmentInfo colorAttachment{};
         colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        colorAttachment.imageView = mImpl->mImageViews[mImpl->mCurrentImage];
+        colorAttachment.imageView = msaa
+                ? mImpl->mMsaaImage.mImpl->mView
+                : mImpl->mImageViews[mImpl->mCurrentImage];
         colorAttachment.imageLayout = ToVkImageLayout(ImageLayout::kColorAttachment);
         colorAttachment.loadOp = loadOp == LoadOp::kClear
                 ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         colorAttachment.clearValue.color = {
                 {clearColor[0], clearColor[1], clearColor[2], clearColor[3]}};
+        if (msaa) {
+            colorAttachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+            colorAttachment.resolveImageView = mImpl->mImageViews[mImpl->mCurrentImage];
+            colorAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
 
         VkRenderingAttachmentInfo depthAttachment{};
         if (depthImage != nullptr) {
@@ -192,6 +223,10 @@ namespace moe::rhi {
 
     Format Swapchain::GetFormat() const {
         return mImpl ? mImpl->mFormat : Format::kUndefined;
+    }
+
+    uint32_t Swapchain::GetSampleCount() const {
+        return mImpl ? mImpl->mSampleCount : 1;
     }
 
     bool Swapchain::GetCurrentImage(Image& outImage) {

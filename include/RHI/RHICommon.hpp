@@ -243,6 +243,10 @@ namespace moe::rhi {
         uint32_t mLayerCount{1};
         Format mFormat{Format::kR8G8B8A8Unorm};
         ImageUsage mUsage{ImageUsage::kSampled};
+        // Multisampling: 1 (default), 2, 4 or 8. Multisampled images can only
+        // be used as attachments (resolve them into a single-sample image to
+        // sample the result).
+        uint32_t mSampleCount{1};
     };
 
     struct SamplerCreateInfo {

@@ -36,6 +36,8 @@ namespace moe::rhi {
         // layout; depthLoadOp kClear clears it to depthClear, kLoad borrows
         // the existing contents (e.g. a later pass depth-testing against an
         // earlier pass). Record draws between BeginRendering and EndRendering.
+        // When the swapchain is multisampled, rendering happens in an internal
+        // multisample image which is resolved into the current image.
         bool BeginRendering(CommandList& cmd, const float clearColor[4],
                 LoadOp loadOp = LoadOp::kClear, const Image* depthImage = nullptr,
                 float depthClear = 1.0f, LoadOp depthLoadOp = LoadOp::kClear);
@@ -54,6 +56,8 @@ namespace moe::rhi {
         uint32_t GetWidth() const;
         uint32_t GetHeight() const;
         Format GetFormat() const;
+        // 1 when the swapchain renders directly into the presented image.
+        uint32_t GetSampleCount() const;
 
         // Wraps the currently acquired image as a non-owning Image (Destroy()
         // on the wrapper drops only the wrapper, never the swapchain image).

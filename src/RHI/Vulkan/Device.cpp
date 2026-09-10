@@ -153,6 +153,17 @@ namespace moe::rhi {
         }
         auto vkbPhysicalDevice = *selectorResult;
         impl->mPhysicalDevice = vkbPhysicalDevice.physical_device;
+        // highest color+depth sample count supported for framebuffer attachments
+        {
+            const VkSampleCountFlags common = vkbPhysicalDevice.properties.limits.framebufferColorSampleCounts
+                    & vkbPhysicalDevice.properties.limits.framebufferDepthSampleCounts;
+            for (const uint32_t samples : {8u, 4u, 2u}) {
+                if ((common & ToVkSampleCount(samples)) != 0) {
+                    impl->mMaxSampleCount = samples;
+                    break;
+                }
+            }
+        }
         moe::Logger::info("RHI selected GPU: {}", vkbPhysicalDevice.properties.deviceName);
 
         vkb::DeviceBuilder deviceBuilder{vkbPhysicalDevice};
@@ -276,7 +287,7 @@ namespace moe::rhi {
         imageInfo.extent = {info.mWidth, info.mHeight, info.mDepth};
         imageInfo.mipLevels = info.mMipLevels;
         imageInfo.arrayLayers = layerCount;
-        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.samples = ToVkSampleCount(info.mSampleCount);
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.usage = ToVkImageUsage(info.mUsage);
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -355,7 +366,8 @@ namespace moe::rhi {
         return true;
     }
 
-    bool Device::CreateSwapchain(uintptr_t surfaceHandle, uint32_t width, uint32_t height, Swapchain& outSwapchain) {
+    bool Device::CreateSwapchain(uintptr_t surfaceHandle, uint32_t width, uint32_t height,
+            Swapchain& outSwapchain, uint32_t sampleCount) {
         outSwapchain.mImpl = std::make_unique<SwapchainImpl>();
         auto* impl = outSwapchain.mImpl.get();
         impl->mDevice = mImpl.get();
@@ -365,6 +377,9 @@ namespace moe::rhi {
         bool success = false;
         Defer rollback{[&] {
             if (!success) {
+                if (outSwapchain.mImpl != nullptr) {
+                    outSwapchain.mImpl->mMsaaImage.Destroy();
+                }
                 outSwapchain.mImpl.reset();
             }
         }};
@@ -469,6 +484,24 @@ namespace moe::rhi {
             if (vkCreateSemaphore(mImpl->mDevice, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS) {
                 return Fail("Failed to create swapchain render-finished semaphores");
             }
+        }
+
+        if (sampleCount > 1) {
+            if (sampleCount > mImpl->mMaxSampleCount) {
+                return Fail("Swapchain sample count exceeds device support");
+            }
+            ImageCreateInfo msaaInfo{};
+            msaaInfo.mType = ImageType::k2D;
+            msaaInfo.mWidth = impl->mWidth;
+            msaaInfo.mHeight = impl->mHeight;
+            msaaInfo.mFormat = impl->mFormat;
+            msaaInfo.mUsage = ImageUsage::kColorAttachment;
+            msaaInfo.mSampleCount = sampleCount;
+            if (!CreateImage(msaaInfo, impl->mMsaaImage)) {
+                return Fail("Failed to create multisampled swapchain image: " + moe::Error::Get());
+            }
+            impl->mSampleCount = sampleCount;
+            moe::Logger::info("Swapchain: {}x MSAA", sampleCount);
         }
         success = true;
         return true;
@@ -575,6 +608,10 @@ namespace moe::rhi {
         }
         outInstance = reinterpret_cast<uintptr_t>(mImpl->mInstance.instance);
         return true;
+    }
+
+    uint32_t Device::GetMaxSampleCount() const {
+        return mImpl != nullptr ? mImpl->mMaxSampleCount : 1;
     }
 
     bool Device::GetVulkanHandles(RhiVulkanHandles& outHandles) const {

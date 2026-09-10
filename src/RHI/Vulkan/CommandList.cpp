@@ -125,7 +125,8 @@ namespace moe::rhi {
     }
 
     void CommandList::BeginRendering(const Image& color, const float clearColor[4],
-            const Image* depth, float depthClear, LoadOp colorLoadOp, LoadOp depthLoadOp) {
+            const Image* depth, float depthClear, LoadOp colorLoadOp, LoadOp depthLoadOp,
+            const Image* resolveColor) {
         VkRenderingAttachmentInfo colorAttachment{};
         colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         colorAttachment.imageView = color.mImpl->mView;
@@ -135,6 +136,11 @@ namespace moe::rhi {
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         colorAttachment.clearValue.color = {
                 {clearColor[0], clearColor[1], clearColor[2], clearColor[3]}};
+        if (resolveColor != nullptr) {
+            colorAttachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+            colorAttachment.resolveImageView = resolveColor->mImpl->mView;
+            colorAttachment.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
 
         VkRenderingAttachmentInfo depthAttachment{};
         if (depth != nullptr) {

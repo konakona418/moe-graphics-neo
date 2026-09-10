@@ -41,11 +41,12 @@ namespace moe::ui {
         // was initialized but not destroyed (leak trap, same discipline as RHI).
         void Destroy();
 
-        // Builds the three pipelines (formats from the swapchain) and the
-        // vertex/staging buffers. Pipelines are owned by the cache; the cache
-        // must outlive the drawer.
+        // Builds the three pipelines (formats from the swapchain, sample count
+        // from the caller so they match the render pass they record into) and
+        // the vertex/staging buffers. Pipelines are owned by the cache; the
+        // cache must outlive the drawer.
         bool Init(moe::rhi::Device& device, moe::rhi::DefaultPipelineCache& cache,
-                moe::rhi::Swapchain& swapchain);
+                moe::rhi::Swapchain& swapchain, uint32_t sampleCount = 1);
 
         bool IsActive() const;
 
