@@ -172,6 +172,22 @@ if(TARGET moe-shaders)
     add_dependencies(moe-example-nubis moe-shaders)
 endif()
 
+add_executable(moe-example-toon-cloud
+  toon_cloud/main.cpp
+)
+
+target_link_libraries(moe-example-toon-cloud PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-toon-cloud PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-toon-cloud moe-shaders)
+endif()
+
 add_executable(moe-example-ui
   ui/main.cpp
 )
