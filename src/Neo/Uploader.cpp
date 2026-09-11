@@ -275,7 +275,7 @@ namespace moe::neo {
         imageInfo.mType = texture.mDepth > 1 ? rhi::ImageType::k3D : rhi::ImageType::k2D;
         imageInfo.mWidth = texture.mWidth;
         imageInfo.mHeight = texture.mHeight;
-        imageInfo.mDepth = 1;
+        imageInfo.mDepth = texture.mDepth;
         imageInfo.mMipLevels = texture.mMipLevels;
         imageInfo.mFormat = texture.mSrgb ? rhi::Format::kR8G8B8A8Srgb : rhi::Format::kR8G8B8A8Unorm;
         imageInfo.mUsage = rhi::ImageUsage::kSampled | rhi::ImageUsage::kTransferDst
