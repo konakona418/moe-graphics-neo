@@ -1,5 +1,7 @@
 #include "Core/Logger.hpp"
 
+#include <Core/Profile.hpp>
+
 #include <mutex>
 #include <spdlog/async.h>
 #include <spdlog/async_logger.h>
@@ -9,7 +11,8 @@
 namespace moe {
     std::shared_ptr<Logger> Logger::mInstance{nullptr};
 
-    void Logger::initialize() {
+    void Logger::Initialize() {
+        MOE_PROFILE_ZONE();
         constexpr std::size_t queue_size = 8192;
         spdlog::init_thread_pool(queue_size, 1);
 
@@ -32,31 +35,35 @@ namespace moe {
         spdlog::register_logger(mLogger);
     }
 
-    void Logger::shutdown() {
+    void Logger::Shutdown() {
+        MOE_PROFILE_ZONE();
         spdlog::drop_all();
         mLogger.reset();
         spdlog::shutdown();
     }
 
-    void Logger::flush() {
+    void Logger::Flush() {
+        MOE_PROFILE_ZONE();
         if (mLogger) mLogger->flush();
     }
 
-    void Logger::setThreadName(std::string_view name) {
+    void Logger::SetThreadName(std::string_view name) {
+        MOE_PROFILE_ZONE();
+        MOE_PROFILE_THREAD(std::string(name).c_str());
         static std::mutex mutex;
         // protect mThreadNames map
         {
             std::lock_guard<std::mutex> lk(mutex);
-            auto logger = get();
+            auto logger = Get();
             logger->mThreadNames[std::this_thread::get_id()] = name;
         }
     }
 
-    std::shared_ptr<Logger> Logger::get() {
+    std::shared_ptr<Logger> Logger::Get() {
         static std::once_flag flag;
         std::call_once(flag, []() {
             mInstance = std::make_shared<Logger>();
-            mInstance->initialize();
+            mInstance->Initialize();
         });
         return mInstance;
     }

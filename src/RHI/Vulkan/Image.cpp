@@ -1,4 +1,5 @@
 #include "RHI/Image.hpp"
+#include <Core/Profile.hpp>
 
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
@@ -14,6 +15,7 @@ namespace moe::rhi {
     }
 
     void Image::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mOwned && mImpl->mDevice && mImpl->mImage != VK_NULL_HANDLE) {
             // Deferred: the image may still be in flight when destroyed.
             DeferredDeletion deletion;

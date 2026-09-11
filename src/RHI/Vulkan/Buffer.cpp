@@ -1,4 +1,5 @@
 #include "RHI/Buffer.hpp"
+#include <Core/Profile.hpp>
 
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
@@ -13,6 +14,7 @@ namespace moe::rhi {
     }
 
     void Buffer::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mDevice && mImpl->mBuffer != VK_NULL_HANDLE) {
             // Deferred: the buffer may still be in flight when destroyed.
             DeferredDeletion deletion;
@@ -24,6 +26,7 @@ namespace moe::rhi {
     }
 
     void* Buffer::Map() {
+        MOE_PROFILE_ZONE();
         if (!mImpl || !mImpl->mCpuVisible) {
             return nullptr;
         }
@@ -37,6 +40,7 @@ namespace moe::rhi {
     }
 
     void Buffer::Unmap() {
+        MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mCpuVisible) {
             // Push data written by the CPU (no-op on coherent memory).
             vmaFlushAllocation(mImpl->mDevice->mAllocator, mImpl->mAllocation, 0, mImpl->mSize);

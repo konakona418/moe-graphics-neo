@@ -1,6 +1,7 @@
 #include "Core/FileIo.hpp"
 
 #include "Core/Error.hpp"
+#include <Core/Profile.hpp>
 
 #include <fstream>
 #include <iterator>
@@ -8,6 +9,7 @@
 
 namespace moe {
     bool ReadFileBytes(const char* path, std::vector<uint8_t>& out) {
+        MOE_PROFILE_ZONE();
         std::ifstream file(path, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
             return Fail(std::string("failed to open file: ") + path);
@@ -23,6 +25,7 @@ namespace moe {
     }
 
     bool ReadFileText(const char* path, std::string& out) {
+        MOE_PROFILE_ZONE();
         std::ifstream file(path, std::ios::binary);
         if (!file.is_open()) {
             return Fail(std::string("failed to open file: ") + path);

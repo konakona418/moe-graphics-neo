@@ -1,4 +1,5 @@
 #include <Neo/TextureLoader.hpp>
+#include <Core/Profile.hpp>
 
 #include <Core/Logger.hpp>
 
@@ -10,13 +11,14 @@
 
 namespace moe::neo {
     bool DecodeTexture(const uint8_t* data, size_t size, Texture& out, bool srgb) {
+        MOE_PROFILE_ZONE();
         int width = 0;
         int height = 0;
         int channels = 0;
         uint8_t* pixels = stbi_load_from_memory(data, static_cast<int>(size),
                 &width, &height, &channels, 4); // force RGBA8
         if (pixels == nullptr) {
-            moe::Logger::error("[neo] texture: failed to decode image: {}",
+            moe::Logger::Error("[neo] texture: failed to decode image: {}",
                     stbi_failure_reason());
             return false;
         }

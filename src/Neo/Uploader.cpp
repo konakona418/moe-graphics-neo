@@ -1,4 +1,5 @@
 #include "Neo/Uploader.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 #include <Core/Logger.hpp>
@@ -62,6 +63,7 @@ namespace moe::neo {
     }// namespace
 
     bool Uploader::Init(rhi::Device& device) {
+        MOE_PROFILE_ZONE();
         if (!device.WaitIdle()) {
             return moe::Fail("Uploader: device WaitIdle failed");
         }
@@ -70,6 +72,7 @@ namespace moe::neo {
     }
 
     bool Uploader::CreateStagingBuffer(size_t size, rhi::Buffer& out) {
+        MOE_PROFILE_ZONE();
         rhi::BufferCreateInfo stagingInfo{};
         stagingInfo.mSize = size;
         stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
@@ -82,6 +85,7 @@ namespace moe::neo {
 
     bool Uploader::UploadBytes(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
             bool waitForCompletion, rhi::PipelineStage dstStage, rhi::Access dstAccess) {
+        MOE_PROFILE_ZONE();
         rhi::Buffer staging;
         if (!CreateStagingBuffer(byteCount, staging)) {
             return false;
@@ -122,6 +126,7 @@ namespace moe::neo {
     }
 
     bool Uploader::UploadMesh(const Mesh& mesh, UploadedMesh& out) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             return moe::Fail("Uploader: not initialized");
         }
@@ -155,12 +160,13 @@ namespace moe::neo {
         if (!UploadMeshData(vertexData, indexData, stride, normalOffset, uvOffset, colorOffset, out)) {
             return false;
         }
-        moe::Logger::info("Uploaded mesh '{}' ({} verts, {} indices, stride {})",
+        moe::Logger::Info("Uploaded mesh '{}' ({} verts, {} indices, stride {})",
                 mesh.mName, out.mVertexCount, out.mIndexCount, out.mVertexStride);
         return true;
     }
 
     bool Uploader::UploadMeshPrimitive(const MeshPrimitive& primitive, UploadedMesh& out) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             return moe::Fail("Uploader: not initialized");
         }
@@ -184,7 +190,7 @@ namespace moe::neo {
         if (!UploadMeshData(vertexData, indexData, stride, normalOffset, uvOffset, colorOffset, out)) {
             return false;
         }
-        moe::Logger::info("Uploaded mesh primitive ({} verts, {} indices, stride {})",
+        moe::Logger::Info("Uploaded mesh primitive ({} verts, {} indices, stride {})",
                 out.mVertexCount, out.mIndexCount, out.mVertexStride);
         return true;
     }
@@ -193,6 +199,7 @@ namespace moe::neo {
             const std::vector<uint32_t>& indexData, uint32_t stride,
             uint32_t normalOffset, uint32_t uvOffset, uint32_t colorOffset,
             UploadedMesh& out) {
+        MOE_PROFILE_ZONE();
         const uint64_t vertexBytes = vertexData.size();
         const uint64_t indexBytes = indexData.size() * sizeof(uint32_t);
 
@@ -252,6 +259,7 @@ namespace moe::neo {
     }
 
     bool Uploader::UploadTexture(const Texture& texture, UploadedTexture& out) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             return moe::Fail("Uploader: not initialized");
         }
@@ -359,7 +367,7 @@ namespace moe::neo {
         }
         cmd.Destroy();
         staging.Destroy();
-        moe::Logger::info("Uploaded texture '{}' ({}x{}x{}, {} ch, {})",
+        moe::Logger::Info("Uploaded texture '{}' ({}x{}x{}, {} ch, {})",
                 texture.mName, texture.mWidth, texture.mHeight, texture.mDepth,
                 texture.mChannels, texture.mSrgb ? "sRGB" : "linear");
         return true;
@@ -367,6 +375,7 @@ namespace moe::neo {
 
     bool Uploader::UpdateMeshVertices(const UploadedMesh& mesh,
             const uint8_t* vertexData, size_t byteCount) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             return moe::Fail("Uploader: not initialized");
         }
@@ -382,6 +391,7 @@ namespace moe::neo {
 
     bool Uploader::UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
             rhi::Buffer& out, rhi::PipelineStage dstStage, rhi::Access dstAccess) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             return moe::Fail("Uploader: not initialized");
         }
@@ -399,12 +409,13 @@ namespace moe::neo {
             out.Destroy();
             return false;
         }
-        moe::Logger::info("Uploaded buffer ({} bytes)", byteCount);
+        moe::Logger::Info("Uploaded buffer ({} bytes)", byteCount);
         return true;
     }
 
     bool Uploader::UpdateBuffer(const rhi::Buffer& dst, const void* data, size_t byteCount,
             rhi::PipelineStage dstStage, rhi::Access dstAccess) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             return moe::Fail("Uploader: not initialized");
         }

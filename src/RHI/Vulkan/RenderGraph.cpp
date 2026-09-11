@@ -1,4 +1,5 @@
 #include "RHI/RenderGraph.hpp"
+#include <Core/Profile.hpp>
 
 #include "Core/Error.hpp"
 #include "RHI/Buffer.hpp"
@@ -46,16 +47,19 @@ namespace moe::rhi {
     RenderGraph::~RenderGraph() = default;
 
     ResourceId RenderGraph::RegisterImage(Image& image) {
+        MOE_PROFILE_ZONE();
         mImpl->mResources.push_back({&image, nullptr});
         return static_cast<ResourceId>(mImpl->mResources.size() - 1);
     }
 
     ResourceId RenderGraph::RegisterBuffer(Buffer& buffer) {
+        MOE_PROFILE_ZONE();
         mImpl->mResources.push_back({nullptr, &buffer});
         return static_cast<ResourceId>(mImpl->mResources.size() - 1);
     }
 
     bool RenderGraph::AddPass(const PassDesc& desc) {
+        MOE_PROFILE_ZONE();
         if (desc.mPass == nullptr) {
             return false;
         }
@@ -84,6 +88,7 @@ namespace moe::rhi {
     }
 
     bool RenderGraph::Compile() {
+        MOE_PROFILE_ZONE();
         const uint32_t passCount = static_cast<uint32_t>(mImpl->mPasses.size());
 
         // ---- topological sort ----
@@ -220,6 +225,7 @@ namespace moe::rhi {
     }
 
     bool RenderGraph::Execute(CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         if (!mImpl->mCompiled) {
             return false;
         }

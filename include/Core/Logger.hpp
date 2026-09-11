@@ -7,45 +7,45 @@
 namespace moe {
     class Logger {
     public:
-        void initialize();
-        void shutdown();
-        void flush();
+        void Initialize();
+        void Shutdown();
+        void Flush();
 
-        static void setThreadName(std::string_view name);
+        static void SetThreadName(std::string_view name);
 
         template<typename... Args>
-        static void info(const char* fmt, const Args&... args) {
-            get()->log(spdlog::level::info, fmt, args...);
+        static void Info(const char* fmt, const Args&... args) {
+            Get()->Log(spdlog::level::info, fmt, args...);
         }
         template<typename... Args>
-        static void warn(const char* fmt, const Args&... args) {
-            get()->log(spdlog::level::warn, fmt, args...);
+        static void Warn(const char* fmt, const Args&... args) {
+            Get()->Log(spdlog::level::warn, fmt, args...);
         }
         template<typename... Args>
-        static void error(const char* fmt, const Args&... args) {
-            get()->log(spdlog::level::err, fmt, args...);
+        static void Error(const char* fmt, const Args&... args) {
+            Get()->Log(spdlog::level::err, fmt, args...);
         }
         template<typename... Args>
-        static void critical(const char* fmt, const Args&... args) {
-            get()->log(spdlog::level::critical, fmt, args...);
+        static void Critical(const char* fmt, const Args&... args) {
+            Get()->Log(spdlog::level::critical, fmt, args...);
         }
         template<typename... Args>
-        static void debug(const char* fmt, const Args&... args) {
-            get()->log(spdlog::level::debug, fmt, args...);
+        static void Debug(const char* fmt, const Args&... args) {
+            Get()->Log(spdlog::level::debug, fmt, args...);
         }
 
-        static std::shared_ptr<Logger> get();
+        static std::shared_ptr<Logger> Get();
 
     private:
-        std::string_view getThreadName() const {
+        std::string_view GetThreadName() const {
             auto it = mThreadNames.find(std::this_thread::get_id());
             if (it != mThreadNames.end()) return it->second;
             return "Unknown";
         }
 
         template<typename... Args>
-        void log(spdlog::level::level_enum lvl, const char* fmt, Args&&... args) {
-            auto threadName = getThreadName();
+        void Log(spdlog::level::level_enum lvl, const char* fmt, Args&&... args) {
+            auto threadName = GetThreadName();
             auto output = fmt::format(fmt::runtime(fmt), std::forward<Args>(args)...);
             if (mLogger) mLogger->log(lvl, "[{}] {}", threadName, output);
         }

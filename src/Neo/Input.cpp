@@ -1,4 +1,5 @@
 #include "Neo/Input.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 #include "Neo/Window.hpp"
@@ -111,6 +112,7 @@ namespace moe::neo {
     }
 
     void Input::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }
@@ -127,6 +129,7 @@ namespace moe::neo {
     }
 
     bool Input::Init(Window& window) {
+        MOE_PROFILE_ZONE();
         mImpl = std::make_unique<Impl>();
         mImpl->mWindow = reinterpret_cast<GLFWwindow*>(window.GetHandle());
         if (mImpl->mWindow == nullptr) {
@@ -146,6 +149,7 @@ namespace moe::neo {
     }
 
     void Input::EndFrame() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }

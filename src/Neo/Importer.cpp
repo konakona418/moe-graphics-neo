@@ -1,4 +1,5 @@
 #include "Neo/Importer.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 #include <Neo/TextureLoader.hpp>
@@ -96,6 +97,7 @@ namespace moe::neo {
     }// namespace
 
     bool ImportGltf(const char* path, Scene& outScene) {
+        MOE_PROFILE_ZONE();
         fastgltf::Parser parser;
         auto data = fastgltf::GltfDataBuffer::FromPath(path);
         if (data.error() != fastgltf::Error::None) {

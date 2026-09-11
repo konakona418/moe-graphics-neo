@@ -1,4 +1,5 @@
 #include "Neo/Window.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 
@@ -24,6 +25,7 @@ namespace moe::neo {
     }
 
     void Window::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }
@@ -39,6 +41,7 @@ namespace moe::neo {
 
     bool Window::Create(moe::rhi::Device& device, uint32_t width, uint32_t height,
             const char* title) {
+        MOE_PROFILE_ZONE();
         mImpl = new Impl();
 
         if (glfwInit() != GLFW_TRUE) {
@@ -84,6 +87,7 @@ namespace moe::neo {
     }
 
     void Window::PollEvents() {
+        MOE_PROFILE_ZONE();
         if (mImpl != nullptr) {
             glfwPollEvents();
         }

@@ -1,4 +1,5 @@
 #include "Neo/SceneGraph.hpp"
+#include <Core/Profile.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -11,6 +12,7 @@ namespace moe::neo {
     }
 
     std::vector<glm::mat4> SceneGraph::ComputeWorldTransforms() const {
+        MOE_PROFILE_ZONE();
         std::vector<glm::mat4> world(mNodes.size(), glm::mat4(1.0f));
 
         moe::SmallVector<uint32_t, 8> stack = mRootNodes;

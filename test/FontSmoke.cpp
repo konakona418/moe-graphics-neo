@@ -87,7 +87,7 @@ int main() {
         device.Destroy();
     });
 
-    const char* kFont = MOE_SOURCE_DIR "/vendors/JoltPhysics/Assets/Fonts/Roboto-Regular.ttf";
+    const char* kFont = MOE_SOURCE_DIR "/vendors/imgui/misc/fonts/Roboto-Medium.ttf";
     moe::neo::Font font = assets.LoadFont(kFont, "Hello, Text!");
     if (!font.IsValid()) {
         return moe::test::Fail(kTestName);

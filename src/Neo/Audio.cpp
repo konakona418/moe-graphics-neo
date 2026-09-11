@@ -1,4 +1,5 @@
 #include "AudioInternal.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 #include <Core/Logger.hpp>
@@ -25,7 +26,7 @@ namespace moe::neo {
         bool CheckAlError(const char* what) {
             const ALenum err = alGetError();
             if (err != AL_NO_ERROR) {
-                moe::Logger::error("[neo] OpenAL {}: {}", what, GetAlErrorString(err));
+                moe::Logger::Error("[neo] OpenAL {}: {}", what, GetAlErrorString(err));
                 return false;
             }
             return true;
@@ -91,12 +92,12 @@ namespace moe::neo {
 
         void LoadStaticData(AudioSource& source) {
             if (!source.mProvider->LoadStatic(source.mScratch) || source.mScratch.empty()) {
-                moe::Logger::error("[neo] audio: failed to decode static data");
+                moe::Logger::Error("[neo] audio: failed to decode static data");
                 return;
             }
             ALenum format = 0;
             if (!FormatFromChannels(source.mProvider->GetChannelCount(), &format)) {
-                moe::Logger::error("[neo] audio: unsupported channel count {}",
+                moe::Logger::Error("[neo] audio: unsupported channel count {}",
                         source.mProvider->GetChannelCount());
                 return;
             }
@@ -114,7 +115,7 @@ namespace moe::neo {
         void LoadStreamingBuffers(AudioSource& source) {
             ALenum format = 0;
             if (!FormatFromChannels(source.mProvider->GetChannelCount(), &format)) {
-                moe::Logger::error("[neo] audio: unsupported channel count {}",
+                moe::Logger::Error("[neo] audio: unsupported channel count {}",
                         source.mProvider->GetChannelCount());
                 return;
             }
@@ -134,7 +135,7 @@ namespace moe::neo {
                 source.mQueuedCount = i + 1;
             }
             if (source.mBufferCount == 0) {
-                moe::Logger::error("[neo] audio: stream contains no data");
+                moe::Logger::Error("[neo] audio: stream contains no data");
             }
         }
     }// namespace
@@ -163,7 +164,7 @@ namespace moe::neo {
             std::lock_guard<std::mutex> lock(mQueueMutex);
             const uint32_t next = (mWriteIndex + 1) % kCommandCapacity;
             if (next == mReadIndex) {
-                moe::Logger::error("[neo] audio: command queue full, dropping command");
+                moe::Logger::Error("[neo] audio: command queue full, dropping command");
                 return false;
             }
             mCommands[mWriteIndex] = std::move(cmd);
@@ -182,7 +183,7 @@ namespace moe::neo {
                         mAliveSources.push_back(handle);
                         *cmd.mOutHandle = handle;
                     } else {
-                        moe::Logger::error("[neo] audio: alGenSources failed");
+                        moe::Logger::Error("[neo] audio: alGenSources failed");
                     }
                     if (cmd.mDone != nullptr) {
                         cmd.mDone->test_and_set();
@@ -328,7 +329,7 @@ namespace moe::neo {
                 if (elapsed < kTickDuration) {
                     std::this_thread::sleep_for(kTickDuration - elapsed);
                 } else {
-                    moe::Logger::warn("[neo] audio: main loop is running behind");
+                    moe::Logger::Warn("[neo] audio: main loop is running behind");
                 }
                 lastTick = std::chrono::steady_clock::now();
             }
@@ -346,6 +347,7 @@ namespace moe::neo {
     }
 
     bool Audio::Init() {
+        MOE_PROFILE_ZONE();
         if (mImpl != nullptr) {
             return true; // already initialized
         }
@@ -357,7 +359,7 @@ namespace moe::neo {
 
         mImpl->mRunning = true;
         mImpl->mAudioThread = std::thread([&]() {
-            moe::Logger::setThreadName("Audio");
+            moe::Logger::SetThreadName("Audio");
 
             mImpl->mDevice = alcOpenDevice(kOpenAlDeviceName);
             if (mImpl->mDevice == nullptr) {
@@ -365,7 +367,7 @@ namespace moe::neo {
                 initDone.test_and_set();
                 return;
             }
-            moe::Logger::info("[neo] audio: opened device '{}'",
+            moe::Logger::Info("[neo] audio: opened device '{}'",
                     alcGetString(mImpl->mDevice, ALC_DEVICE_SPECIFIER));
 
             mImpl->mContext = alcCreateContext(mImpl->mDevice, nullptr);
@@ -413,6 +415,7 @@ namespace moe::neo {
     }
 
     void Audio::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }
@@ -434,6 +437,7 @@ namespace moe::neo {
     }
 
     AudioSourceHandle Audio::CreateSource() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return {};
         }
@@ -453,6 +457,7 @@ namespace moe::neo {
     }
 
     void Audio::DestroySource(AudioSourceHandle source) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !source.IsValid()) {
             return;
         }
@@ -464,6 +469,7 @@ namespace moe::neo {
 
     void Audio::LoadSource(AudioSourceHandle source,
             std::unique_ptr<AudioDataProvider> provider, bool loop) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !source.IsValid() || provider == nullptr) {
             return;
         }
@@ -476,6 +482,7 @@ namespace moe::neo {
     }
 
     void Audio::Play(AudioSourceHandle source) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !source.IsValid()) {
             return;
         }
@@ -486,6 +493,7 @@ namespace moe::neo {
     }
 
     void Audio::Pause(AudioSourceHandle source) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !source.IsValid()) {
             return;
         }
@@ -496,6 +504,7 @@ namespace moe::neo {
     }
 
     void Audio::Stop(AudioSourceHandle source) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !source.IsValid()) {
             return;
         }
@@ -506,6 +515,7 @@ namespace moe::neo {
     }
 
     void Audio::SetSourcePosition(AudioSourceHandle source, const glm::vec3& position) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !source.IsValid()) {
             return;
         }

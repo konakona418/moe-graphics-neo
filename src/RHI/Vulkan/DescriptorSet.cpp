@@ -1,4 +1,5 @@
 #include "RHI/DescriptorSet.hpp"
+#include <Core/Profile.hpp>
 
 #include "RHI/Buffer.hpp"
 #include "RHI/Image.hpp"
@@ -33,6 +34,7 @@ namespace moe::rhi {
     }
 
     void DescriptorSet::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mDevice && mImpl->mPool != VK_NULL_HANDLE) {
             DeferredDeletion deletion;
             deletion.mDescriptorPool = mImpl->mPool;
@@ -42,6 +44,7 @@ namespace moe::rhi {
     }
 
     bool DescriptorSet::WriteBuffer(uint32_t binding, const Buffer& buffer) {
+        MOE_PROFILE_ZONE();
         if (!mImpl || !mImpl->mDevice || mImpl->mSet == VK_NULL_HANDLE) {
             return false;
         }
@@ -75,6 +78,7 @@ namespace moe::rhi {
     }
 
     bool DescriptorSet::WriteImage(uint32_t binding, const Image& image, DescriptorType type) {
+        MOE_PROFILE_ZONE();
         if (!mImpl || !mImpl->mDevice || mImpl->mSet == VK_NULL_HANDLE) {
             return false;
         }
@@ -102,6 +106,7 @@ namespace moe::rhi {
     }
 
     bool DescriptorSet::WriteSampler(uint32_t binding, const Sampler& sampler) {
+        MOE_PROFILE_ZONE();
         if (!mImpl || !mImpl->mDevice || mImpl->mSet == VK_NULL_HANDLE) {
             return false;
         }

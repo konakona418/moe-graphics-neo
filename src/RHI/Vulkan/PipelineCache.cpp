@@ -1,4 +1,5 @@
 #include "RHI/PipelineCache.hpp"
+#include <Core/Profile.hpp>
 
 #include "RHI/CommandList.hpp"
 #include "RHI/DescriptorSet.hpp"
@@ -394,6 +395,7 @@ namespace moe::rhi {
     }
 
     bool DefaultPipelineCache::Create(Device& device) {
+        MOE_PROFILE_ZONE();
         if (mImpl != nullptr) {
             return false; // already bound to a device
         }
@@ -434,6 +436,7 @@ namespace moe::rhi {
     }
 
     bool DefaultPipelineCache::GetOrCreateGraphics(const GraphicsPipelineState& state, GraphicsPipeline& out) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return false; // Create() not called
         }
@@ -461,12 +464,13 @@ namespace moe::rhi {
         out.mNode = node.get();
         mImpl->mNodes.push_back(std::move(node));
         mImpl->mIndexByHash[key].push_back(index);
-        moe::Logger::info("RHI compiled graphics pipeline ({} stage(s), hash {:016x})",
+        moe::Logger::Info("RHI compiled graphics pipeline ({} stage(s), hash {:016x})",
                 state.mProgram->GetStageCount(), key);
         return true;
     }
 
     bool DefaultPipelineCache::GetOrCreateCompute(const ComputePipelineState& state, ComputePipeline& out) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return false; // Create() not called
         }
@@ -494,12 +498,13 @@ namespace moe::rhi {
         out.mNode = node.get();
         mImpl->mNodes.push_back(std::move(node));
         mImpl->mIndexByHash[key].push_back(index);
-        moe::Logger::info("RHI compiled compute pipeline ({} stage(s), hash {:016x})",
+        moe::Logger::Info("RHI compiled compute pipeline ({} stage(s), hash {:016x})",
                 state.mProgram->GetStageCount(), key);
         return true;
     }
 
     bool DefaultPipelineCache::Reload(ShaderProgram& program) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mDevice == nullptr) {
             return false;
         }
@@ -533,11 +538,12 @@ namespace moe::rhi {
             indexList.erase(std::remove(indexList.begin(), indexList.end(), static_cast<uint32_t>(i)), indexList.end());
             node.mKeyHash = 0; // mark dead; the node stays in mNodes as a tombstone
         }
-        moe::Logger::info("RHI reloaded shader program, invalidated cached pipelines");
+        moe::Logger::Info("RHI reloaded shader program, invalidated cached pipelines");
         return ok;
     }
 
     void DefaultPipelineCache::Clear() {
+        MOE_PROFILE_ZONE();
         if (mImpl->mDevice == nullptr) {
             mImpl->mNodes.clear();
             mImpl->mIndexByHash.clear();

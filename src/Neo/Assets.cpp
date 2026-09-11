@@ -1,4 +1,5 @@
 #include "Neo/Assets.hpp"
+#include <Core/Profile.hpp>
 
 #include "Neo/Importer.hpp"
 #include "Neo/TextureLoader.hpp"
@@ -160,6 +161,7 @@ namespace moe::neo {
     }
 
     bool Assets::Init(rhi::Device& device) {
+        MOE_PROFILE_ZONE();
         if (mDevice != nullptr) {
             return moe::Fail("Assets already initialized");
         }
@@ -171,6 +173,7 @@ namespace moe::neo {
     }
 
     void Assets::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             return;
         }
@@ -183,10 +186,11 @@ namespace moe::neo {
         mPrograms.Clear();
         mShaders.Clear();
         mDevice = nullptr;
-        moe::Logger::info("Assets destroyed");
+        moe::Logger::Info("Assets destroyed");
     }
 
     Model Assets::LoadModel(const char* path) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             moe::Error::Set("Assets: not initialized");
             return {};
@@ -199,6 +203,7 @@ namespace moe::neo {
     }
 
     Model Assets::UploadScene(const Scene& scene) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             moe::Error::Set("Assets: not initialized");
             return {};
@@ -276,12 +281,13 @@ namespace moe::neo {
             }
         }
 
-        moe::Logger::info("Uploaded model '{}' ({} parts, {} textures, {} draws)",
+        moe::Logger::Info("Uploaded model '{}' ({} parts, {} textures, {} draws)",
                 model->mName, model->mPartIndices.size(), model->mTextures.size(), model->mDraws.size());
         return Model(this, handle);
     }
 
     TextureHandle Assets::LoadTexture(const char* path, bool srgb) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             moe::Error::Set("Assets: not initialized");
             return {};
@@ -300,6 +306,7 @@ namespace moe::neo {
     }
 
     TextureHandle Assets::UploadTexture(const Texture& texture) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             moe::Error::Set("Assets: not initialized");
             return {};
@@ -313,6 +320,7 @@ namespace moe::neo {
     }
 
     ProgramHandle Assets::LoadGraphicsProgram(const char* vertexPath, const char* fragmentPath) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             moe::Error::Set("Assets: not initialized");
             return {};
@@ -341,6 +349,7 @@ namespace moe::neo {
     }
 
     ProgramHandle Assets::LoadComputeProgram(const char* path) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             moe::Error::Set("Assets: not initialized");
             return {};

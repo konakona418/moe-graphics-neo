@@ -22,27 +22,18 @@
 [submodule "vendors/fmt"]
 	path = vendors/fmt
 	url = https://github.com/fmtlib/fmt.git
-[submodule "vendors/span"]
-	path = vendors/span
-	url = https://github.com/tcbrindle/span.git
 [submodule "vendors/imgui"]
 	path = vendors/imgui
 	url = https://github.com/ocornut/imgui.git
 [submodule "vendors/stb"]
 	path = vendors/stb
 	url = https://github.com/nothings/stb.git
-[submodule "vendors/JoltPhysics"]
-	path = vendors/JoltPhysics
-	url = https://github.com/jrouwe/JoltPhysics.git
 [submodule "vendors/im3d"]
 	path = vendors/im3d
 	url = https://github.com/john-chapman/im3d.git
 [submodule "vendors/openal-soft"]
 	path = vendors/openal-soft
 	url = https://github.com/kcat/openal-soft.git
-[submodule "vendors/Catch2"]
-	path = vendors/Catch2
-	url = https://github.com/catchorg/Catch2.git
 [submodule "vendors/ogg"]
 	path = vendors/ogg
 	url = https://github.com/xiph/ogg.git
@@ -58,3 +49,6 @@
 [submodule "vendors/fastgltf"]
 	path = vendors/fastgltf
 	url = https://github.com/spnda/fastgltf.git
+[submodule "vendors/tracy"]
+	path = vendors/tracy
+	url = https://github.com/wolfpld/tracy.git

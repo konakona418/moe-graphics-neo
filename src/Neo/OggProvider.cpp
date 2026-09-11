@@ -1,4 +1,5 @@
 #include <Neo/OggProvider.hpp>
+#include <Core/Profile.hpp>
 
 #include <Core/Logger.hpp>
 
@@ -93,7 +94,7 @@ namespace moe::neo {
                         1, // signed
                         nullptr);
                 if (n < 0) {
-                    moe::Logger::error("[neo] audio: error reading Ogg Vorbis stream");
+                    moe::Logger::Error("[neo] audio: error reading Ogg Vorbis stream");
                     return 0;
                 }
                 if (n == 0) {
@@ -108,6 +109,7 @@ namespace moe::neo {
 
     OggProvider::OggProvider(const uint8_t* oggData, size_t size, Mode mode)
         : mImpl(std::make_unique<Impl>()) {
+        MOE_PROFILE_ZONE();
         mImpl->mMode = mode;
         mImpl->mData = oggData;
         mImpl->mSize = size;
@@ -120,7 +122,7 @@ namespace moe::neo {
                     reinterpret_cast<const unsigned char*>(oggData), static_cast<int>(size),
                     &channels, &sampleRate, &decoded);
             if (sampleCount < 0) {
-                moe::Logger::error("[neo] audio: failed to decode static Ogg Vorbis data");
+                moe::Logger::Error("[neo] audio: failed to decode static Ogg Vorbis data");
                 return;
             }
             const size_t totalBytes = static_cast<size_t>(sampleCount)
@@ -140,7 +142,7 @@ namespace moe::neo {
             callbacks.tell_func = &Impl::TellFunc;
 
             if (ov_open_callbacks(mImpl.get(), &mImpl->mOggFile, nullptr, 0, callbacks) < 0) {
-                moe::Logger::error("[neo] audio: failed to open streamed Ogg Vorbis data");
+                moe::Logger::Error("[neo] audio: failed to open streamed Ogg Vorbis data");
                 return;
             }
             const vorbis_info* info = ov_info(&mImpl->mOggFile, -1);
@@ -169,8 +171,9 @@ namespace moe::neo {
     }
 
     bool OggProvider::LoadStatic(std::vector<uint8_t>& outPcm) {
+        MOE_PROFILE_ZONE();
         if (!mImpl->mValid || mImpl->mMode != Mode::kStatic) {
-            moe::Logger::error("[neo] audio: static load requested on a non-static provider");
+            moe::Logger::Error("[neo] audio: static load requested on a non-static provider");
             return false;
         }
         outPcm = mImpl->mDecoded;
@@ -178,6 +181,7 @@ namespace moe::neo {
     }
 
     size_t OggProvider::StreamNextChunk(std::vector<uint8_t>& outPcm) {
+        MOE_PROFILE_ZONE();
         if (!mImpl->mValid || mImpl->mMode != Mode::kStreamed) {
             return 0;
         }
@@ -189,7 +193,7 @@ namespace moe::neo {
             return;
         }
         if (ov_pcm_seek(&mImpl->mOggFile, 0) != 0) {
-            moe::Logger::error("[neo] audio: failed to seek stream to start");
+            moe::Logger::Error("[neo] audio: failed to seek stream to start");
         }
     }
 }// namespace moe::neo

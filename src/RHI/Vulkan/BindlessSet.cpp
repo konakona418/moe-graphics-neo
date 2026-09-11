@@ -1,4 +1,5 @@
 #include "RHI/BindlessSet.hpp"
+#include <Core/Profile.hpp>
 
 #include "Core/Error.hpp"
 #include "RHI/CommandList.hpp"
@@ -27,6 +28,7 @@ namespace moe::rhi {
     }
 
     bool BindlessSet::Init(Device& device) {
+        MOE_PROFILE_ZONE();
         if (mImpl != nullptr) {
             return true; // already initialized
         }
@@ -118,6 +120,7 @@ namespace moe::rhi {
     }
 
     void BindlessSet::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }
@@ -135,6 +138,7 @@ namespace moe::rhi {
     }
 
     bool BindlessSet::AddImage(uint32_t id, const Image& image) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !mImpl->mInitialized || id >= kMaxImages
                 || image.mImpl == nullptr || image.mImpl->mView == VK_NULL_HANDLE) {
             return false;
@@ -161,6 +165,7 @@ namespace moe::rhi {
     }
 
     bool BindlessSet::AddSampler(uint32_t id, const Sampler& sampler) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !mImpl->mInitialized || id >= kMaxSamplers
                 || sampler.mImpl == nullptr || sampler.mImpl->mSampler == VK_NULL_HANDLE) {
             return false;
@@ -199,6 +204,7 @@ namespace moe::rhi {
     }
 
     void BindlessSet::Bind(CommandList& cmd, const GraphicsPipeline& pipeline, uint32_t setIndex) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !mImpl->mInitialized) {
             return;
         }
@@ -207,6 +213,7 @@ namespace moe::rhi {
     }
 
     void BindlessSet::Bind(CommandList& cmd, const ComputePipeline& pipeline, uint32_t setIndex) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || !mImpl->mInitialized) {
             return;
         }

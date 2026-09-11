@@ -1,4 +1,5 @@
 #include "Neo/Renderer.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Logger.hpp>
 
@@ -19,7 +20,7 @@ namespace moe::neo {
                 }
             }
             warned.push_back(message);
-            moe::Logger::warn("{}", message);
+            moe::Logger::Warn("{}", message);
         }
 
         // Same, at debug level: a material override absent from the current
@@ -33,7 +34,7 @@ namespace moe::neo {
                 }
             }
             logged.push_back(message);
-            moe::Logger::debug("{}", message);
+            moe::Logger::Debug("{}", message);
         }
 
         // Descriptor binding lookup by SPIR-V name (set 0, any stage).
@@ -286,18 +287,21 @@ namespace moe::neo {
 
     void PassContext::DrawModel(const Model& model, ProgramHandle defaultProgram,
             const glm::mat4& transform) {
+        MOE_PROFILE_ZONE();
         DrawModelImpl(*this, mRenderer->GetCameraInternal(), model.mAssets, model.mHandle,
                 defaultProgram, transform, false, nullptr);
     }
 
     void PassContext::DrawModelForced(const Model& model, ProgramHandle program,
             const glm::mat4& transform) {
+        MOE_PROFILE_ZONE();
         DrawModelImpl(*this, mRenderer->GetCameraInternal(), model.mAssets, model.mHandle,
                 program, transform, true, nullptr);
     }
 
     void PassContext::DrawModelPart(const Model& model, const char* materialName,
             ProgramHandle program, const glm::mat4& transform) {
+        MOE_PROFILE_ZONE();
         DrawModelImpl(*this, mRenderer->GetCameraInternal(), model.mAssets, model.mHandle,
                 program, transform, true, materialName);
     }

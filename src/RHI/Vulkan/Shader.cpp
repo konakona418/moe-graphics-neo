@@ -1,4 +1,5 @@
 #include "RHI/Shader.hpp"
+#include <Core/Profile.hpp>
 
 #include <spirv_reflect.h>
 
@@ -58,6 +59,7 @@ namespace moe::rhi {
     Shader::~Shader() = default;
 
     bool Shader::Load(const char* spvPath, ShaderStage stage) {
+        MOE_PROFILE_ZONE();
         std::vector<uint8_t> bytes;
         if (!moe::ReadFileBytes(spvPath, bytes)) {
             return false;
@@ -113,11 +115,12 @@ namespace moe::rhi {
         spvReflectDestroyShaderModule(&module);
 
         mImpl->mReflection = std::move(reflection);
-        moe::Logger::info("RHI shader loaded: {} ({} bytes)", spvPath, mImpl->mCode.size());
+        moe::Logger::Info("RHI shader loaded: {} ({} bytes)", spvPath, mImpl->mCode.size());
         return true;
     }
 
     bool Shader::Reload() {
+        MOE_PROFILE_ZONE();
         if (mImpl->mPath.empty()) {
             return moe::Fail("Shader has no path to reload");
         }
@@ -149,6 +152,7 @@ namespace moe::rhi {
     ShaderProgram::~ShaderProgram() = default;
 
     bool ShaderProgram::AddShader(const Shader& shader) {
+        MOE_PROFILE_ZONE();
         const uint32_t index = static_cast<uint32_t>(shader.GetStage());
         if (mImpl->mStages[index] != nullptr) {
             return false; // stage already present

@@ -1,4 +1,5 @@
 #include "RHI/Sampler.hpp"
+#include <Core/Profile.hpp>
 
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
@@ -13,6 +14,7 @@ namespace moe::rhi {
     }
 
     void Sampler::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mDevice && mImpl->mSampler != VK_NULL_HANDLE) {
             // Deferred: the sampler may still be in flight when destroyed.
             DeferredDeletion deletion;

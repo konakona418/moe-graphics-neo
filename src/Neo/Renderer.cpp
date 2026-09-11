@@ -1,4 +1,5 @@
 #include "Neo/Renderer.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 #include <Core/Logger.hpp>
@@ -457,6 +458,7 @@ namespace moe::neo {
 
     bool Renderer::Init(rhi::Device& device, rhi::DefaultPipelineCache& cache,
             uint32_t width, uint32_t height, uint32_t sampleCount) {
+        MOE_PROFILE_ZONE();
         if (mImpl->mDevice != nullptr) {
             return moe::Fail("Renderer already initialized");
         }
@@ -490,14 +492,15 @@ namespace moe::neo {
         }
         mImpl->mStatsTime = std::chrono::steady_clock::now();
         if (sampleCount > 1) {
-            moe::Logger::info("Renderer initialized ({}x{}, {}x MSAA)", width, height, sampleCount);
+            moe::Logger::Info("Renderer initialized ({}x{}, {}x MSAA)", width, height, sampleCount);
         } else {
-            moe::Logger::info("Renderer initialized ({}x{})", width, height);
+            moe::Logger::Info("Renderer initialized ({}x{})", width, height);
         }
         return true;
     }
 
     void Renderer::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mDevice == nullptr) {
             return;
         }
@@ -522,11 +525,12 @@ namespace moe::neo {
         mImpl->mDynamicVertexCapacity = 0;
         mImpl->mDynamicVertexCpu.clear();
         mImpl->mDevice = nullptr;
-        moe::Logger::info("Renderer destroyed");
+        moe::Logger::Info("Renderer destroyed");
     }
 
     void Renderer::BeginFrame(rhi::CommandList& cmd, const SwapchainImage& frame,
             const float clearColor[4]) {
+        MOE_PROFILE_ZONE();
         for (auto& set : mImpl->mFrameSets) {
             set->Destroy();
         }
@@ -556,10 +560,11 @@ namespace moe::neo {
     }
 
     void Renderer::EndFrame() {
+        MOE_PROFILE_ZONE();
         Impl& impl = *mImpl;
 
         if (impl.mPassOpen) {
-            moe::Logger::warn("Renderer: pass '{}' left open at EndFrame; closing it", impl.mPassName);
+            moe::Logger::Warn("Renderer: pass '{}' left open at EndFrame; closing it", impl.mPassName);
             if (impl.mCurrentTarget == nullptr) {
                 impl.mSwapchain->EndRendering(*impl.mCmd);
             } else {
@@ -589,7 +594,7 @@ namespace moe::neo {
         if (elapsed >= 1.0) {
             const double fps = static_cast<double>(impl.mStatsFrames) / elapsed;
             const double avgDraws = static_cast<double>(impl.mStatsDraws) / impl.mStatsFrames;
-            moe::Logger::info("Renderer frame stats: {:.1f} fps, {:.0f} avg draws/frame, "
+            moe::Logger::Info("Renderer frame stats: {:.1f} fps, {:.0f} avg draws/frame, "
                     "{} cached pipelines",
                     fps, avgDraws, impl.mCache->GetNodeCount());
             impl.mStatsTime = now;
@@ -737,6 +742,7 @@ namespace moe::neo {
 
     RenderTargetHandle Renderer::CreateRenderTarget(uint32_t width, uint32_t height,
             rhi::Format format, bool withDepth, uint32_t sampleCount) {
+        MOE_PROFILE_ZONE();
         if (width == 0 || height == 0) {
             moe::Error::Set("CreateRenderTarget: zero size");
             return {};
@@ -799,13 +805,14 @@ namespace moe::neo {
             }
         }
         const RenderTargetHandle handle = mImpl->mTargets.Add(std::move(target));
-        moe::Logger::info("Renderer created render target ({}x{} {}{})",
+        moe::Logger::Info("Renderer created render target ({}x{} {}{})",
                 width, height, withDepth ? "depth" : "color-only",
                 samples > 1 ? " msaa" : "");
         return handle;
     }
 
     void Renderer::DestroyRenderTarget(RenderTargetHandle handle) {
+        MOE_PROFILE_ZONE();
         RenderTarget* target = mImpl->mTargets.Get(handle);
         if (target == nullptr) {
             moe::Error::Set("DestroyRenderTarget: stale handle");
@@ -822,7 +829,7 @@ namespace moe::neo {
         }
         target->mImage->Destroy();
         mImpl->mTargets.Remove(handle);
-        moe::Logger::info("Renderer destroyed render target ({}x{} {})",
+        moe::Logger::Info("Renderer destroyed render target ({}x{} {})",
                 width, height, hasDepth ? "depth" : "color-only");
     }
 
@@ -837,11 +844,12 @@ namespace moe::neo {
     // ---- passes ----
 
     void Renderer::BeginPass(const PassDesc& desc) {
+        MOE_PROFILE_ZONE_DYNAMIC(desc.mName != nullptr ? desc.mName : "pass");
         Impl& impl = *mImpl;
         rhi::CommandList& cmd = *impl.mCmd;
 
         if (impl.mPassOpen) {
-            moe::Logger::warn("Renderer: pass '{}' still open when '{}' begins; closing it",
+            moe::Logger::Warn("Renderer: pass '{}' still open when '{}' begins; closing it",
                     impl.mPassName != nullptr ? impl.mPassName : "?", desc.mName);
             cmd.EndRendering();
             impl.mPassOpen = false;
@@ -907,6 +915,7 @@ namespace moe::neo {
 
     void Renderer::EndPass(const PassDesc& desc) {
         Impl& impl = *mImpl;
+        MOE_PROFILE_ZONE_DYNAMIC(impl.mPassName != nullptr ? impl.mPassName : "pass");
         if (!impl.mPassOpen) {
             moe::Error::Set("EndPass: no active pass");
             return;
@@ -969,6 +978,7 @@ namespace moe::neo {
 
     void Renderer::DrawImmediate(const UploadedMesh* mesh, const rhi::ShaderProgram& program,
             rhi::PrimitiveTopology topology, uint32_t instanceCount) {
+        MOE_PROFILE_ZONE();
         Impl& impl = *mImpl;
         rhi::CommandList& cmd = *impl.mCmd;
 
@@ -1001,6 +1011,7 @@ namespace moe::neo {
             const rhi::VertexAttribute* attributes, uint32_t attributeCount, uint32_t stride,
             const rhi::ShaderProgram& program, rhi::PrimitiveTopology topology,
             uint32_t firstVertex) {
+        MOE_PROFILE_ZONE();
         Impl& impl = *mImpl;
         rhi::CommandList& cmd = *impl.mCmd;
 
@@ -1027,6 +1038,7 @@ namespace moe::neo {
     }
 
     uint32_t Renderer::AppendDynamicVertices(const void* data, uint32_t bytes) {
+        MOE_PROFILE_ZONE();
         if (data == nullptr || bytes == 0) {
             return UINT32_MAX;
         }

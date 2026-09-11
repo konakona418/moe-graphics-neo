@@ -1,4 +1,5 @@
 #include "UI/Im3dDrawer.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 #include <RHI/Buffer.hpp>
@@ -52,6 +53,7 @@ namespace moe::ui {
     }
 
     void Im3dDrawer::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }
@@ -79,6 +81,7 @@ namespace moe::ui {
 
     bool Im3dDrawer::Init(moe::rhi::Device& device, moe::rhi::DefaultPipelineCache& cache,
             moe::rhi::Swapchain& swapchain, uint32_t sampleCount) {
+        MOE_PROFILE_ZONE();
         mImpl = std::make_unique<Im3dDrawerImpl>();
 
         struct ShaderPaths {
@@ -164,6 +167,7 @@ namespace moe::ui {
     }
 
     void Im3dDrawer::UploadVertices(moe::rhi::CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         if (!HasDraws()) {
             return;
         }
@@ -204,6 +208,7 @@ namespace moe::ui {
     }
 
     void Im3dDrawer::Record(moe::rhi::CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         if (!HasDraws()) {
             return;
         }

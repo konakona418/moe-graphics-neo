@@ -11,6 +11,7 @@
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
+#include <Core/Profile.hpp>
 
 #include "Neo/Font.hpp"
 
@@ -413,6 +414,7 @@ namespace moe::neo {
     }
 
     uint32_t FontData::BuildVertices(std::string_view text, const TextDrawParams& params) {
+        MOE_PROFILE_ZONE();
         mScratch.clear();
         const float scale = GetScaleForPixelHeight(params.mPixelSize);
         if (scale <= 0.0f) {
@@ -450,11 +452,13 @@ namespace moe::neo {
     }
 
     void FontData::Destroy() {
+        MOE_PROFILE_ZONE();
         mCurveBuffer.Destroy();
         mBandBuffer.Destroy();
     }
 
     Font Assets::LoadFont(const char* path, std::string_view sampleText) {
+        MOE_PROFILE_ZONE();
         if (mDevice == nullptr) {
             moe::Error::Set("Assets: not initialized");
             return {};
@@ -493,7 +497,7 @@ namespace moe::neo {
             return {};
         }
 
-        moe::Logger::info("Loaded font '{}' ({} glyphs, {} curves, {} band uints)", path,
+        moe::Logger::Info("Loaded font '{}' ({} glyphs, {} curves, {} band uints)", path,
                 font->mGlyphs.size(), font->mCurves.size() / 8, font->mBands.size());
         return Font(this, handle);
     }

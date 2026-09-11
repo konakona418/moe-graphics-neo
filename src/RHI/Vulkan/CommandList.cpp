@@ -7,6 +7,7 @@
 #include "Mappings.hpp"
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
+#include <Core/Profile.hpp>
 
 #include <algorithm>
 #include <utility>
@@ -19,6 +20,7 @@ namespace moe::rhi {
     }
 
     void CommandList::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mDevice && mImpl->mCommandBuffer != VK_NULL_HANDLE) {
             // Deferred: the command buffer may still be in flight when destroyed.
             DeferredDeletion deletion;
@@ -29,6 +31,7 @@ namespace moe::rhi {
     }
 
     void CommandList::Begin() {
+        MOE_PROFILE_ZONE();
         vkResetCommandBuffer(mImpl->mCommandBuffer, 0);
 
         VkCommandBufferBeginInfo beginInfo{};
@@ -38,12 +41,14 @@ namespace moe::rhi {
     }
 
     void CommandList::End() {
+        MOE_PROFILE_ZONE();
         vkEndCommandBuffer(mImpl->mCommandBuffer);
         mImpl->mRecording = false;
     }
 
     void CommandList::CopyBuffer(const Buffer& src, const Buffer& dst,
             uint64_t size, uint64_t srcOffset, uint64_t dstOffset) {
+        MOE_PROFILE_ZONE();
         VkBufferCopy region{};
         region.srcOffset = srcOffset;
         region.dstOffset = dstOffset;
@@ -52,6 +57,7 @@ namespace moe::rhi {
     }
 
     void CommandList::CopyImageToBuffer(const Image& image, const Buffer& dst) {
+        MOE_PROFILE_ZONE();
         VkBufferImageCopy region{};
         region.imageSubresource.aspectMask = image.mImpl->mFormat == Format::kD32Float
                 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -66,6 +72,7 @@ namespace moe::rhi {
     void CommandList::CopyBufferToImage(const Buffer& src, const Image& dst,
             uint32_t mipLevel, uint32_t baseArrayLayer, uint32_t layerCount,
             uint32_t bufferOffset) {
+        MOE_PROFILE_ZONE();
         VkBufferImageCopy region{};
         region.bufferOffset = bufferOffset;
         region.bufferRowLength = 0; // tightly packed
@@ -87,6 +94,7 @@ namespace moe::rhi {
 
     void CommandList::CopyImage(const Image& src, ImageLayout srcLayout,
             const Image& dst, ImageLayout dstLayout) {
+        MOE_PROFILE_ZONE();
         VkImageCopy region{};
         region.srcSubresource.aspectMask = src.mImpl->mFormat == Format::kD32Float
                 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -105,6 +113,7 @@ namespace moe::rhi {
 
     void CommandList::BlitImage(const Image& src, ImageLayout srcLayout,
             const Image& dst, ImageLayout dstLayout, Filter filter) {
+        MOE_PROFILE_ZONE();
         VkImageBlit region{};
         region.srcSubresource.aspectMask = src.mImpl->mFormat == Format::kD32Float
                 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -133,6 +142,7 @@ namespace moe::rhi {
     void CommandList::BeginRendering(const Image& color, const float clearColor[4],
             const Image* depth, float depthClear, LoadOp colorLoadOp, LoadOp depthLoadOp,
             const Image* resolveColor) {
+        MOE_PROFILE_ZONE();
         VkRenderingAttachmentInfo colorAttachment{};
         colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         colorAttachment.imageView = color.mImpl->mView;
@@ -170,6 +180,7 @@ namespace moe::rhi {
     }
 
     void CommandList::EndRendering() {
+        MOE_PROFILE_ZONE();
         vkCmdEndRendering(mImpl->mCommandBuffer);
     }
 
@@ -199,10 +210,12 @@ namespace moe::rhi {
     }
 
     void CommandList::BindGraphicsPipeline(const GraphicsPipeline& pipeline) {
+        MOE_PROFILE_ZONE();
         vkCmdBindPipeline(mImpl->mCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.mNode->mPipeline);
     }
 
     void CommandList::Dispatch(const ComputePipeline& pipeline, uint32_t x, uint32_t y, uint32_t z) {
+        MOE_PROFILE_ZONE();
         vkCmdBindPipeline(mImpl->mCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.mNode->mPipeline);
         vkCmdDispatch(mImpl->mCommandBuffer, x, y, z);
     }
@@ -224,11 +237,13 @@ namespace moe::rhi {
     }
 
     void CommandList::Draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) {
+        MOE_PROFILE_ZONE();
         vkCmdDraw(mImpl->mCommandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
     }
 
     void CommandList::DrawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex,
             int32_t vertexOffset, uint32_t firstInstance) {
+        MOE_PROFILE_ZONE();
         vkCmdDrawIndexed(mImpl->mCommandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
     }
 

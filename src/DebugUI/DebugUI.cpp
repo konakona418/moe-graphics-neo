@@ -1,4 +1,5 @@
 #include "UI/DebugUI.hpp"
+#include <Core/Profile.hpp>
 
 #include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
@@ -55,6 +56,7 @@ namespace moe::ui {
     }
 
     void DebugUI::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }
@@ -71,6 +73,7 @@ namespace moe::ui {
 
     bool DebugUI::Init(moe::rhi::Device& device, moe::rhi::Swapchain& swapchain,
             uintptr_t glfwWindow) {
+        MOE_PROFILE_ZONE();
         mImpl = std::make_unique<DebugUIImpl>();
 
         moe::rhi::RhiVulkanHandles handles;
@@ -149,6 +152,7 @@ namespace moe::ui {
     }
 
     void DebugUI::BeginFrame(float deltaSeconds) {
+        MOE_PROFILE_ZONE();
         ImGuiIO& io = ImGui::GetIO();
         io.DeltaTime = deltaSeconds > 0.0f ? deltaSeconds : 1.0f / 60.0f;
         ImGui_ImplVulkan_NewFrame();
@@ -157,6 +161,7 @@ namespace moe::ui {
     }
 
     void DebugUI::Render(moe::rhi::CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         ImGui::Render();
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),
                 reinterpret_cast<VkCommandBuffer>(cmd.GetVulkanHandle()));

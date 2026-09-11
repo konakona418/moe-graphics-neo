@@ -1,4 +1,5 @@
 #include "RHI/Swapchain.hpp"
+#include <Core/Profile.hpp>
 
 #include "RHI/CommandList.hpp"
 #include "RHI/Image.hpp"
@@ -34,6 +35,7 @@ namespace moe::rhi {
     }
 
     bool Swapchain::AcquireImage() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mSwapchain == VK_NULL_HANDLE) {
             return false;
         }
@@ -53,6 +55,7 @@ namespace moe::rhi {
 
     bool Swapchain::BeginRendering(CommandList& cmd, const float clearColor[4], LoadOp loadOp,
             const Image* depthImage, float depthClear, LoadOp depthLoadOp) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mCurrentImage >= mImpl->mImages.size()) {
             return false;
         }
@@ -132,6 +135,7 @@ namespace moe::rhi {
     }
 
     void Swapchain::EndRendering(CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         vkCmdEndRendering(cmd.mImpl->mCommandBuffer);
 
         // color attachment -> presentable
@@ -147,6 +151,7 @@ namespace moe::rhi {
     }
 
     bool Swapchain::BeginTransfer(CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mCurrentImage >= mImpl->mImages.size()) {
             return false;
         }
@@ -165,6 +170,7 @@ namespace moe::rhi {
     }
 
     void Swapchain::EndTransfer(CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mCurrentLayout != ImageLayout::kTransferDst) {
             return;
         }
@@ -180,6 +186,7 @@ namespace moe::rhi {
     }
 
     bool Swapchain::Present(CommandList& cmd) {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mSwapchain == VK_NULL_HANDLE
                 || mImpl->mCurrentImage >= mImpl->mRenderFinished.size()) {
             return false;

@@ -3,6 +3,7 @@
 // with the text shader.
 
 #include "Neo/Renderer.hpp"
+#include <Core/Profile.hpp>
 
 #include "Neo/Font.hpp"
 
@@ -64,6 +65,7 @@ namespace moe::neo {
 
     void PassContext::DrawText(const Font& font, std::string_view text,
             const TextDrawParams& params, ProgramHandle programHandle) {
+        MOE_PROFILE_ZONE();
         if (!font.IsValid()) {
             moe::Error::Set("DrawText: invalid font");
             return;

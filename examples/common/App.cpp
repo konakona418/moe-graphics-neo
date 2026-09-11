@@ -3,6 +3,7 @@
 #include <Core/Error.hpp>
 #include <Core/Defer.hpp>
 #include <Core/Logger.hpp>
+#include <Core/Profile.hpp>
 #include <RHI/Image.hpp>
 
 #include <chrono>
@@ -16,6 +17,8 @@ namespace examples {
 
     bool App::Run(const char* title, uint32_t width, uint32_t height,
             const AppCallbacks& callbacks) {
+        MOE_PROFILE_ZONE();
+        MOE_PROFILE_THREAD("main");
         moe::rhi::DeviceCreateInfo deviceInfo{};
         deviceInfo.mApplicationName = "moe-example";
         deviceInfo.mEnableValidation = true;
@@ -31,12 +34,12 @@ namespace examples {
         // clamp the requested MSAA level to what the device supports
         uint32_t sampleCount = callbacks.mSampleCount;
         if (sampleCount != 1 && sampleCount != 2 && sampleCount != 4 && sampleCount != 8) {
-            moe::Logger::warn("App: invalid sample count {}; using 4x", sampleCount);
+            moe::Logger::Warn("App: invalid sample count {}; using 4x", sampleCount);
             sampleCount = 4;
         }
         const uint32_t maxSamples = mDevice.GetMaxSampleCount();
         if (sampleCount > maxSamples) {
-            moe::Logger::warn("App: {}x MSAA unsupported; using {}x", sampleCount, maxSamples);
+            moe::Logger::Warn("App: {}x MSAA unsupported; using {}x", sampleCount, maxSamples);
             sampleCount = maxSamples;
         }
 
@@ -50,7 +53,7 @@ namespace examples {
             return false;
         }
         moe::Defer swapchainCleanup([&] { mSwapchain.Destroy(); });
-        moe::Logger::info("App: swapchain ready ({}x{})",
+        moe::Logger::Info("App: swapchain ready ({}x{})",
                 mSwapchain.GetWidth(), mSwapchain.GetHeight());
 
         if (!mDevice.CreateCommandList(mCommandList)) {
@@ -100,6 +103,7 @@ namespace examples {
         bool failed = false;
         auto lastFrame = std::chrono::steady_clock::now();
         while (!mWindow.ShouldClose()) {
+            MOE_PROFILE_ZONE_NAMED("frame");
             mWindow.PollEvents();
             if (!mSwapchain.AcquireImage()) {
                 continue;
@@ -146,6 +150,7 @@ namespace examples {
                 break;
             }
             mInput.EndFrame(); // clear per-frame edges + mouse deltas
+            MOE_PROFILE_FRAME();
 
             // per-second frame statistics (avoid flooding the log)
             const auto frameNow = std::chrono::steady_clock::now();
@@ -156,7 +161,7 @@ namespace examples {
             mFpsFrames += 1;
             const double fpsElapsed = std::chrono::duration<double>(frameNow - mFpsTime).count();
             if (frameElapsed > 0.0 && fpsElapsed >= 1.0) {
-                moe::Logger::info("App: {:.1f} fps", static_cast<double>(mFpsFrames) / fpsElapsed);
+                moe::Logger::Info("App: {:.1f} fps", static_cast<double>(mFpsFrames) / fpsElapsed);
                 mFpsTime = frameNow;
                 mFpsFrames = 0;
             }

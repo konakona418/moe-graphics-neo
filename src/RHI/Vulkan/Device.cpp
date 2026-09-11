@@ -11,6 +11,7 @@
 #include "Core/Defer.hpp"
 #include "Core/Error.hpp"
 #include "Core/Logger.hpp"
+#include <Core/Profile.hpp>
 #include "Mappings.hpp"
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
@@ -67,6 +68,7 @@ namespace moe::rhi {
     Device::Device() = default;
 
     bool Device::Create(const DeviceCreateInfo& info, Device& outDevice) {
+        MOE_PROFILE_ZONE();
         if (info.mPipelineCache == nullptr) {
             return Fail("Device requires an injected PipelineCache (null cache is a fatal error)");
         }
@@ -164,7 +166,7 @@ namespace moe::rhi {
                 }
             }
         }
-        moe::Logger::info("RHI selected GPU: {}", vkbPhysicalDevice.properties.deviceName);
+        moe::Logger::Info("RHI selected GPU: {}", vkbPhysicalDevice.properties.deviceName);
 
         vkb::DeviceBuilder deviceBuilder{vkbPhysicalDevice};
         auto deviceResult = deviceBuilder.build();
@@ -220,6 +222,7 @@ namespace moe::rhi {
     }
 
     void Device::Destroy() {
+        MOE_PROFILE_ZONE();
         if (mImpl == nullptr) {
             return;
         }
@@ -229,6 +232,7 @@ namespace moe::rhi {
     }
 
     bool Device::CreateBuffer(const BufferCreateInfo& info, Buffer& outBuffer) {
+        MOE_PROFILE_ZONE();
         outBuffer.mImpl = std::make_unique<BufferImpl>();
         auto* impl = outBuffer.mImpl.get();
         impl->mDevice = mImpl.get();
@@ -265,6 +269,7 @@ namespace moe::rhi {
     }
 
     bool Device::CreateImage(const ImageCreateInfo& info, Image& outImage) {
+        MOE_PROFILE_ZONE();
         outImage.mImpl = std::make_unique<ImageImpl>();
         auto* impl = outImage.mImpl.get();
         impl->mDevice = mImpl.get();
@@ -327,6 +332,7 @@ namespace moe::rhi {
     }
 
     bool Device::CreateSampler(const SamplerCreateInfo& info, Sampler& outSampler) {
+        MOE_PROFILE_ZONE();
         outSampler.mImpl = std::make_unique<SamplerImpl>();
         auto* impl = outSampler.mImpl.get();
         impl->mDevice = mImpl.get();
@@ -350,6 +356,7 @@ namespace moe::rhi {
     }
 
     bool Device::CreateCommandList(CommandList& outCommandList) {
+        MOE_PROFILE_ZONE();
         outCommandList.mImpl = std::make_unique<CommandListImpl>();
         auto* impl = outCommandList.mImpl.get();
         impl->mDevice = mImpl.get();
@@ -368,6 +375,7 @@ namespace moe::rhi {
 
     bool Device::CreateSwapchain(uintptr_t surfaceHandle, uint32_t width, uint32_t height,
             Swapchain& outSwapchain, uint32_t sampleCount) {
+        MOE_PROFILE_ZONE();
         outSwapchain.mImpl = std::make_unique<SwapchainImpl>();
         auto* impl = outSwapchain.mImpl.get();
         impl->mDevice = mImpl.get();
@@ -501,13 +509,14 @@ namespace moe::rhi {
                 return Fail("Failed to create multisampled swapchain image: " + moe::Error::Get());
             }
             impl->mSampleCount = sampleCount;
-            moe::Logger::info("Swapchain: {}x MSAA", sampleCount);
+            moe::Logger::Info("Swapchain: {}x MSAA", sampleCount);
         }
         success = true;
         return true;
     }
 
     bool Device::CreateDescriptorSet(const DescriptorSetLayout& layout, DescriptorSet& outSet) {
+        MOE_PROFILE_ZONE();
         if (!layout.mImpl || layout.mImpl->mSetLayout == VK_NULL_HANDLE) {
             return Fail("Invalid descriptor set layout");
         }
@@ -553,6 +562,7 @@ namespace moe::rhi {
     }
 
     bool Device::GetOrCreateGraphicsPipeline(const GraphicsPipelineState& state, GraphicsPipeline& out) {
+        MOE_PROFILE_ZONE();
         if (!mPipelineCache->GetOrCreateGraphics(state, out)) {
             return Fail("PipelineCache::GetOrCreateGraphics failed");
         }
@@ -560,6 +570,7 @@ namespace moe::rhi {
     }
 
     bool Device::GetOrCreateComputePipeline(const ComputePipelineState& state, ComputePipeline& out) {
+        MOE_PROFILE_ZONE();
         if (!mPipelineCache->GetOrCreateCompute(state, out)) {
             return Fail("PipelineCache::GetOrCreateCompute failed");
         }
@@ -567,6 +578,7 @@ namespace moe::rhi {
     }
 
     bool Device::Submit(const CommandList& commandList, bool waitForCompletion) {
+        MOE_PROFILE_ZONE();
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
@@ -595,6 +607,7 @@ namespace moe::rhi {
     }
 
     bool Device::WaitIdle() {
+        MOE_PROFILE_ZONE();
         if (vkDeviceWaitIdle(mImpl->mDevice) != VK_SUCCESS) {
             return Fail("Failed to wait for device idle");
         }

@@ -24,9 +24,19 @@ add_subdirectory(vendors/fmt)
 set(SPDLOG_FMT_EXTERNAL ON)
 add_subdirectory(vendors/spdlog)
 
-# Jolt stays vendored (paused: a future physics integration; the old wrapper
-# was purged with the old engine)
-add_subdirectory(vendors/JoltPhysics/Build)
+# profiling: the Tracy client backs every MOE_PROFILE_* macro (see
+# Core/Profile.hpp). On-demand means no data is recorded until the server
+# connects; rebuild with -DTRACY_ON_DEMAND=OFF to capture from launch.
+option(MOE_ENABLE_TRACY "Enable Tracy profiler instrumentation" ON)
+add_library(moe-tracy INTERFACE)
+add_library(moe::tracy ALIAS moe-tracy)
+if(MOE_ENABLE_TRACY)
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    set(TRACY_ON_DEMAND ON CACHE BOOL "" FORCE)
+    set(TRACY_STATIC ON CACHE BOOL "" FORCE)
+    add_subdirectory(vendors/tracy)
+    target_link_libraries(moe-tracy INTERFACE Tracy::TracyClient)
+endif()
 
 # openal-soft auto-enables C++20 modules with modern GCC; the GCC module
 # implementation breaks openal-soft's templates, so force it off.
@@ -49,7 +59,7 @@ set(FASTGLTF_ENABLE_DOCS OFF CACHE BOOL "" FORCE)
 add_subdirectory(vendors/fastgltf)
 
 # engine modules (Core only: the old engine's Math/Audio/Physics/Render/UI
-# were purged; Jolt stays vendored for a future integration)
+# were purged)
 add_subdirectory(src/Core)
 
 # render abstraction layer (backend-agnostic API, Vulkan backend)
