@@ -151,20 +151,6 @@ namespace examples {
             }
             mInput.EndFrame(); // clear per-frame edges + mouse deltas
             MOE_PROFILE_FRAME();
-
-            // per-second frame statistics (avoid flooding the log)
-            const auto frameNow = std::chrono::steady_clock::now();
-            const double frameElapsed = std::chrono::duration<double>(frameNow - lastFrame).count();
-            if (mFpsTime.time_since_epoch().count() == 0) {
-                mFpsTime = frameNow;
-            }
-            mFpsFrames += 1;
-            const double fpsElapsed = std::chrono::duration<double>(frameNow - mFpsTime).count();
-            if (frameElapsed > 0.0 && fpsElapsed >= 1.0) {
-                moe::Logger::Info("App: {:.1f} fps", static_cast<double>(mFpsFrames) / fpsElapsed);
-                mFpsTime = frameNow;
-                mFpsFrames = 0;
-            }
         }
         mDevice.WaitIdle();
 

@@ -149,11 +149,6 @@ namespace moe::neo {
         bool mDynamicVertexUsed{false};
         Uploader mUploader;
 
-        // per-second frame statistics
-        std::chrono::steady_clock::time_point mStatsTime{};
-        uint32_t mStatsFrames{0};
-        uint64_t mStatsDraws{0};
-
         RenderTarget* ResolveTarget(RenderTargetHandle handle) {
             return handle.IsValid() ? mTargets.Get(handle) : nullptr;
         }
@@ -494,7 +489,6 @@ namespace moe::neo {
             mImpl->mDevice = nullptr;
             return moe::Fail("Renderer: depth image: " + moe::Error::Get());
         }
-        mImpl->mStatsTime = std::chrono::steady_clock::now();
         if (sampleCount > 1) {
             moe::Logger::Info("Renderer initialized ({}x{}, {}x MSAA)", width, height, sampleCount);
         } else {
@@ -608,21 +602,6 @@ namespace moe::neo {
                         rhi::Access::kVertexAttributeRead)) {
                 moe::Error::Set("Renderer: dynamic vertex upload: " + moe::Error::Get());
             }
-        }
-
-        // per-second stats (avoids log flooding while keeping visibility)
-        impl.mStatsFrames += 1;
-        const auto now = std::chrono::steady_clock::now();
-        const double elapsed = std::chrono::duration<double>(now - impl.mStatsTime).count();
-        if (elapsed >= 1.0) {
-            const double fps = static_cast<double>(impl.mStatsFrames) / elapsed;
-            const double avgDraws = static_cast<double>(impl.mStatsDraws) / impl.mStatsFrames;
-            moe::Logger::Info("Renderer frame stats: {:.1f} fps, {:.0f} avg draws/frame, "
-                    "{} cached pipelines",
-                    fps, avgDraws, impl.mCache->GetNodeCount());
-            impl.mStatsTime = now;
-            impl.mStatsFrames = 0;
-            impl.mStatsDraws = 0;
         }
     }
 
@@ -1041,7 +1020,6 @@ namespace moe::neo {
         } else {
             cmd.Draw(3, 1, 0, 0);
         }
-        impl.mStatsDraws += 1;
     }
 
     void Renderer::DrawVerticesImmediate(const rhi::Buffer& vertexBuffer, uint32_t vertexCount,
@@ -1070,7 +1048,6 @@ namespace moe::neo {
         if (&vertexBuffer == &impl.mDynamicVertexBuffer) {
             impl.mDynamicVertexUsed = true;
         }
-        impl.mStatsDraws += 1;
     }
 
     uint32_t Renderer::AppendDynamicVertices(const void* data, uint32_t bytes) {

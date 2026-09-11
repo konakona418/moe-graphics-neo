@@ -78,7 +78,5 @@ namespace examples {
         moe::ui::DebugUI mDebugUI;
         moe::ui::Im3dDrawer mIm3d;
         bool mUiActive{false};
-        std::chrono::steady_clock::time_point mFpsTime{};
-        uint32_t mFpsFrames{0};
     };
 }// namespace examples
