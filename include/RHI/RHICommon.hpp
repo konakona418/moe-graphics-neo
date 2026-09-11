@@ -45,6 +45,8 @@ namespace moe::rhi {
         kR16G16B16A16Float,
         kR32G32B32A32Float,
         kD32Float,
+        kD24UnormS8Uint,
+        kD32FloatS8Uint,
     };
 
     enum class ShaderStage : uint32_t {

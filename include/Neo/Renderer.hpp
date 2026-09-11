@@ -45,6 +45,8 @@ namespace moe::neo {
         rhi::BlendFactor mBlendSrcAlpha{rhi::BlendFactor::kOne};
         rhi::BlendFactor mBlendDstAlpha{rhi::BlendFactor::kOneMinusSrcAlpha};
         rhi::BlendOp mBlendAlphaOp{rhi::BlendOp::kAdd};
+        bool mStencilTest{false};
+        rhi::StencilOpState mStencil;
     };
 
     // Per-instance vertex input declaration for BindInstanceBuffer. The
@@ -67,6 +69,7 @@ namespace moe::neo {
         std::unique_ptr<rhi::Image> mMsaaImage;  // valid when mSampleCount > 1 (render attachment)
         std::unique_ptr<rhi::Image> mDepthImage; // valid when mHasDepth
         rhi::Format mFormat{rhi::Format::kR8G8B8A8Unorm};
+        rhi::Format mDepthFormat{rhi::Format::kD32Float};
         uint32_t mWidth{0};
         uint32_t mHeight{0};
         uint32_t mSampleCount{1};
@@ -134,6 +137,9 @@ namespace moe::neo {
         // attachment (BeginPass calls SetViewport). A zero-size rectangle clips
         // everything.
         void SetScissor(int32_t x, int32_t y, uint32_t width, uint32_t height);
+        // Sets the dynamic stencil reference (front and back faces) for
+        // subsequent draws. Requires the target to have a stencil attachment.
+        void SetStencilReference(uint32_t reference);
         void SetPushConstant(int32_t index, const void* data, size_t size);
         void BindImage(uint32_t binding, const rhi::Image& image);
         void BindSampler(uint32_t binding, const rhi::Sampler& sampler);
@@ -287,7 +293,8 @@ namespace moe::neo {
         // (1/2/4/8) to override it for this target (e.g. a 1x normal prepass
         // whose edges must stay crisp). 0 = renderer default.
         RenderTargetHandle CreateRenderTarget(uint32_t width, uint32_t height,
-                rhi::Format format, bool withDepth, uint32_t sampleCount = 0);
+                rhi::Format format, bool withDepth, uint32_t sampleCount = 0,
+                bool withStencil = false);
         void DestroyRenderTarget(RenderTargetHandle handle);
         RenderTarget* GetRenderTarget(RenderTargetHandle handle);
 
@@ -298,6 +305,7 @@ namespace moe::neo {
         friend class PassContext;
         void SetStateInternal(const DrawState& state);
         void SetScissorInternal(int32_t x, int32_t y, uint32_t width, uint32_t height);
+        void SetStencilReferenceInternal(uint32_t reference);
         void SetCameraInternal(const Camera& camera);
         const Camera* GetCameraInternal() const;
         void ClearTextureBindingsInternal();

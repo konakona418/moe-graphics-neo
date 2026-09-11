@@ -43,6 +43,7 @@ namespace moe::rhi {
         hash = Combine(hash, static_cast<uint64_t>(mStencil.mCompareOp));
         hash = Combine(hash, mStencil.mCompareMask);
         hash = Combine(hash, mStencil.mWriteMask);
+        hash = Combine(hash, static_cast<uint64_t>(mStencilTestEnable));
         hash = Combine(hash, static_cast<uint64_t>(mMultisample.mSampleShading));
         hash = Combine(hash, mMultisample.mSampleCount);
         for (uint32_t i = 0; i < mBlendAttachmentCount; ++i) {
@@ -95,6 +96,7 @@ namespace moe::rhi {
                 && mStencil.mCompareOp == other.mStencil.mCompareOp
                 && mStencil.mCompareMask == other.mStencil.mCompareMask
                 && mStencil.mWriteMask == other.mStencil.mWriteMask
+                && mStencilTestEnable == other.mStencilTestEnable
                 && mMultisample.mSampleShading == other.mMultisample.mSampleShading
                 && mMultisample.mSampleCount == other.mMultisample.mSampleCount
                 && mBlendAttachments == other.mBlendAttachments

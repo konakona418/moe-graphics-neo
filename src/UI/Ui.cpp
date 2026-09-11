@@ -130,7 +130,7 @@ namespace moe::ui {
             mTarget = {};
         }
         mTarget = mRenderer->CreateRenderTarget(width, height, rhi::Format::kR8G8B8A8Unorm,
-                false, 0);
+                true, 0, true);
         if (!mTarget.IsValid()) {
             return false;
         }

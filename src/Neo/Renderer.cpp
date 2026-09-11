@@ -345,7 +345,8 @@ namespace moe::neo {
             state.mColorFormatCount = 1;
             state.mColorFormats[0] =
                     mTargetPtr != nullptr ? mTargetPtr->mFormat : mSwapchainFormat;
-            state.mDepthFormat = rhi::Format::kD32Float;
+            state.mDepthFormat = mTargetPtr != nullptr ? mTargetPtr->mDepthFormat
+                                                        : rhi::Format::kD32Float;
             state.mMultisample.mSampleCount = static_cast<uint8_t>(
                     mTargetPtr != nullptr ? mTargetPtr->mSampleCount : mSampleCount);
 
@@ -365,6 +366,8 @@ namespace moe::neo {
             state.mDepth.mTestEnable = mState.mDepthTest;
             state.mDepth.mWriteEnable = mState.mDepthWrite;
             state.mDepth.mCompareOp = mState.mDepthCompareOp;
+            state.mStencilTestEnable = mState.mStencilTest;
+            state.mStencil = mState.mStencil;
             return state;
         }
 
@@ -635,6 +638,12 @@ namespace moe::neo {
         }
     }
 
+    void Renderer::SetStencilReferenceInternal(uint32_t reference) {
+        if (mImpl->mCmd != nullptr) {
+            mImpl->mCmd->SetStencilReference(reference);
+        }
+    }
+
     void Renderer::SetCameraInternal(const Camera& camera) {
         mImpl->mCamera = camera;
         mImpl->mCameraSet = true;
@@ -767,7 +776,7 @@ namespace moe::neo {
     // ---- render targets ----
 
     RenderTargetHandle Renderer::CreateRenderTarget(uint32_t width, uint32_t height,
-            rhi::Format format, bool withDepth, uint32_t sampleCount) {
+            rhi::Format format, bool withDepth, uint32_t sampleCount, bool withStencil) {
         MOE_PROFILE_ZONE();
         if (width == 0 || height == 0) {
             moe::Error::Set("CreateRenderTarget: zero size");
@@ -788,6 +797,8 @@ namespace moe::neo {
         target.mFormat = format;
         target.mSampleCount = samples;
         target.mHasDepth = withDepth;
+        target.mDepthFormat =
+                withStencil ? mImpl->mDevice->GetDepthStencilFormat() : rhi::Format::kD32Float;
         target.mImage = std::make_unique<rhi::Image>();
         target.mDepthImage = withDepth ? std::make_unique<rhi::Image>() : nullptr;
 
@@ -818,7 +829,7 @@ namespace moe::neo {
             depthInfo.mType = rhi::ImageType::k2D;
             depthInfo.mWidth = width;
             depthInfo.mHeight = height;
-            depthInfo.mFormat = rhi::Format::kD32Float;
+            depthInfo.mFormat = target.mDepthFormat;
             depthInfo.mUsage = rhi::ImageUsage::kDepthAttachment | rhi::ImageUsage::kSampled;
             depthInfo.mSampleCount = samples;
             if (!mImpl->mDevice->CreateImage(depthInfo, *target.mDepthImage)) {
@@ -1048,7 +1059,6 @@ namespace moe::neo {
         if (vertexCount == 0) {
             return;
         }
-
         const rhi::GraphicsPipelineState state =
                 impl.BuildPipelineState(attributes, attributeCount, stride, program, topology);
         if (!impl.RecordDraw(cmd, state, program)) {
@@ -1118,6 +1128,10 @@ namespace moe::neo {
 
     void PassContext::SetScissor(int32_t x, int32_t y, uint32_t width, uint32_t height) {
         mRenderer->SetScissorInternal(x, y, width, height);
+    }
+
+    void PassContext::SetStencilReference(uint32_t reference) {
+        mRenderer->SetStencilReferenceInternal(reference);
     }
 
     void PassContext::SetCamera(const Camera& camera) {

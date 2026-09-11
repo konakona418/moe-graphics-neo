@@ -116,6 +116,8 @@ namespace moe::rhi {
         uint32_t mGraphicsQueueFamily{0};
         // highest sample count supported for both color and depth attachments
         uint32_t mMaxSampleCount{1};
+        // cached combined depth-stencil format (see Device::GetDepthStencilFormat)
+        mutable Format mDepthStencilFormat{Format::kUndefined};
         VkCommandPool mCommandPool{VK_NULL_HANDLE};
         VmaAllocator mAllocator{VK_NULL_HANDLE};
         std::vector<DeferredDeletion> mDeferredDeletions;

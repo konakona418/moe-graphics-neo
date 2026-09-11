@@ -25,9 +25,28 @@ namespace moe::rhi {
             case Format::kR16G16B16A16Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
             case Format::kR32G32B32A32Float: return VK_FORMAT_R32G32B32A32_SFLOAT;
             case Format::kD32Float: return VK_FORMAT_D32_SFLOAT;
+            case Format::kD24UnormS8Uint: return VK_FORMAT_D24_UNORM_S8_UINT;
+            case Format::kD32FloatS8Uint: return VK_FORMAT_D32_SFLOAT_S8_UINT;
         }
         MOE_RHI_ASSERT(false, "ToVkFormat: unhandled Format");
         return VK_FORMAT_UNDEFINED;
+    }
+
+    // Image aspect mask for a format: depth-only, combined depth-stencil, or
+    // color.
+    inline VkImageAspectFlags ToVkImageAspect(Format format) {
+        switch (format) {
+            case Format::kD32Float: return VK_IMAGE_ASPECT_DEPTH_BIT;
+            case Format::kD24UnormS8Uint:
+            case Format::kD32FloatS8Uint:
+                return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+            default: return VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+    }
+
+    // True for a combined depth-stencil format (has a stencil component).
+    inline bool FormatHasStencil(Format format) {
+        return format == Format::kD24UnormS8Uint || format == Format::kD32FloatS8Uint;
     }
 
     inline VkSampleCountFlagBits ToVkSampleCount(uint32_t samples) {

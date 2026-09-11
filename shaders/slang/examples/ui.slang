@@ -63,6 +63,16 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     if (mode == 0) {
         return float4(color.rgb * color.a, color.a);
     }
+    if (mode == 3) {
+        // Clip mask: keep only fragments inside the rounded rect, so the
+        // stencil increment/decrement matches the shape exactly. The color is
+        // irrelevant (the mask draws with a no-op blend).
+        const float maskDistance = SdRoundBox(input.local, input.rect.zw, input.params.y);
+        if (maskDistance > 0.0) {
+            discard;
+        }
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
 
     const float d = SdRoundBox(input.local, input.rect.zw, input.params.y);
     const float fill = saturate(0.5 - d);

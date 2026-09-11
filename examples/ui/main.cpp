@@ -234,8 +234,6 @@ namespace {
                         .mBorderWidth = 1.0f, .mPadding = Insets::All(10.0f)})
                                    .SetSize(Size::Fixed(260.0f), Size::Fixed(150.0f));
 
-        Element clips = Row({clipped, scroller}, Style{.mGap = 16.0f});
-
         const std::string gettysburg =
                 "Four score and seven years ago our fathers brought forth on this continent, "
                 "a new nation, conceived in Liberty, and dedicated to the proposition that "
@@ -245,23 +243,31 @@ namespace {
                 "dedicate a portion of that field, as a final resting place for those who "
                 "here gave their lives that that nation might live.";
 
-        // kWrap: a fixed-height clip so the wrapped text visibly overflows and
-        // is scissored away. Padding >= radius keeps the text clear of the
-        // conservative scissor inset; the label fills the content width so its
-        // wrap width matches. Align keeps the clip's fixed size.
-        Element textLayouts = Align(
-                Clip(Label(gettysburg, Style{.mTextLayout = TextLayout::kWrap}),
-                        Style{.mBackground = glm::vec4(0.10f, 0.11f, 0.15f, 1.0f),
-                                .mRadius = 8.0f, .mBorderWidth = 1.0f,
-                                .mPadding = Insets::All(8.0f)})
-                        .SetSize(Size::Fixed(240.0f), Size::Fixed(150.0f)),
-                Alignment::kStart);
+        // kWrap: a scrollable, fixed-height viewport over the wrapped text
+        // (padding >= radius keeps the text clear of the conservative scissor
+        // inset; the label fills the content width so its wrap width matches).
+        Element textLayouts = ScrollView(
+                Label(gettysburg, Style{.mTextLayout = TextLayout::kWrap}),
+                Style{.mBackground = glm::vec4(0.10f, 0.11f, 0.15f, 1.0f), .mRadius = 8.0f,
+                        .mBorderWidth = 1.0f, .mPadding = Insets::All(8.0f)})
+                                   .SetSize(Size::Fixed(240.0f), Size::Fixed(150.0f));
 
         // kEllipsis: one line, truncated with "..." (shown under the header).
         Element truncated = Align(
                 Label(gettysburg, Style{.mTextLayout = TextLayout::kEllipsis})
                         .SetWidth(Size::Fixed(340.0f)),
                 Alignment::kStart);
+
+        // Clipping + scrolling row: the image is larger than its box, the
+        // middle view scrolls a tall column, the right one scrolls wrapped
+        // text. Align keeps the image's fixed height in the stretched row.
+        Element clips = Row(
+                {
+                        Align(clipped, Alignment::kStart),
+                        scroller,
+                        textLayouts,
+                },
+                Style{.mGap = 16.0f});
 
         Element body = Column(
                 {
@@ -271,16 +277,13 @@ namespace {
                         gallery,
                         overlap,
                         clips,
-                        textLayouts,
                         Align(Label("centered horizontally"), Alignment::kCenter),
                 },
                 Style{.mGap = 16.0f});
 
-        // Centered so a tilt/offset excursion stays on screen. The whole page
-        // scrolls when the content is taller than the viewport (radius 0 so the
-        // conservative scissor does not trim the page edges).
-        return ScrollView(Padding(Align(body, Alignment::kCenter), Insets::All(24.0f)),
-                Style{.mRadius = 0.0f});
+        // Centered so a tilt/offset excursion stays on screen. The layer
+        // transform is applied by the composite, not here.
+        return Padding(Align(body, Alignment::kCenter), Insets::All(24.0f));
     }
 
     bool Setup(void* userdata, examples::AppContext& ctx) {
@@ -350,6 +353,8 @@ namespace {
         desc.mWidth = data->mFrame.GetWidth();
         desc.mHeight = data->mFrame.GetHeight();
         desc.mScale = 1.0f;
+        // Layer transform in the UI pass (rendered at final resolution, so it
+        // stays crisp); clipping is exact via the stencil.
         desc.mViewProjection = camera.mViewProjection;
 
         const moe::neo::MouseState& mouse = ctx.mInput.GetMouse();

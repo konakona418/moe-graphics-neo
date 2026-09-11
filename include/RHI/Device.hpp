@@ -97,6 +97,12 @@ namespace moe::rhi {
         // (1, 2, 4 or 8). Renderers clamp their requested MSAA level to this.
         uint32_t GetMaxSampleCount() const;
 
+        // A combined depth-stencil format the device supports as a depth-stencil
+        // attachment (prefers D24_UNORM_S8_UINT, falls back to
+        // D32_SFLOAT_S8_UINT). Vulkan guarantees one of the two is supported, so
+        // this never returns Undefined. Cached after the first query.
+        Format GetDepthStencilFormat() const;
+
         // Returns opaque Vulkan handles for integrations that must talk to
         // Vulkan directly (e.g. ImGui). See RhiVulkanHandles.
         bool GetVulkanHandles(RhiVulkanHandles& outHandles) const;

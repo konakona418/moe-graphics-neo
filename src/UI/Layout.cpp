@@ -331,14 +331,12 @@ namespace moe::ui {
         return horizontal ? glm::vec2(main, cross) : glm::vec2(cross, main);
     }
 
-    void Ui::Impl::Arrange(uint32_t index, const Rect& rect, const Rect* clip,
-            float clipRadius) {
+    void Ui::Impl::Arrange(uint32_t index, const Rect& rect, const Rect* clip) {
         UiNode& node = mNodes[index];
         node.mRect = rect;
         if (clip != nullptr) {
             node.mClip = *clip;
             node.mHasClip = true;
-            node.mClipRadius = clipRadius;
         }
         const Element& element = *node.mElement;
         const ResolvedStyle& style = node.mStyle;
@@ -347,15 +345,12 @@ namespace moe::ui {
         // Clipping containers define a new clip in offset space: the layer
         // offset is applied per element by z, so the box moves with it. The
         // container's own drawing (background/border) is clipped by its
-        // ancestors only; children are clipped to the content box and inherit
-        // the container's corner radius (the scissor insets by it).
+        // ancestors only; children are clipped to the content box (inside the
+        // padding/border) by the stencil mask.
         const glm::vec2 offset = mFrame.mOffset * (1.0f + element.mZ);
-        const Rect offsetBox = rect.Offset(offset);
-        // Children are clipped to the container's border box; the scissor then
-        // insets by the corner radius. A padding at least as large as the
-        // radius therefore keeps the content clear of the trim.
-        const Rect childClip = clip != nullptr ? Intersect(*clip, offsetBox) : offsetBox;
-        const float childRadius = std::max(clipRadius, style.mRadius);
+        const Rect offsetContent = content.Offset(offset);
+        const Rect childClip =
+                clip != nullptr ? Intersect(*clip, offsetContent) : offsetContent;
 
         std::visit(
                 [&](const auto& body) {
@@ -363,15 +358,15 @@ namespace moe::ui {
                     if constexpr (std::is_same_v<T, RowData>) {
                         const float gap = body.mGap >= 0.0f ? body.mGap : style.mGap;
                         ArrangeLinear(node, content, body.mChildren, true, body.mJustify,
-                                body.mAlign, gap, clip, clipRadius);
+                                body.mAlign, gap, clip);
                     } else if constexpr (std::is_same_v<T, ColumnData>) {
                         const float gap = body.mGap >= 0.0f ? body.mGap : style.mGap;
                         ArrangeLinear(node, content, body.mChildren, false, body.mJustify,
-                                body.mAlign, gap, clip, clipRadius);
+                                body.mAlign, gap, clip);
                     } else if constexpr (std::is_same_v<T, PanelData>) {
                         const float gap = body.mGap >= 0.0f ? body.mGap : style.mGap;
                         ArrangeLinear(node, content, body.mChildren, false, Justify::kStart,
-                                Alignment::kStretch, gap, clip, clipRadius);
+                                Alignment::kStretch, gap, clip);
                     } else if constexpr (std::is_same_v<T, StackData>) {
                         for (uint32_t childIndex : node.mChildren) {
                             const Element& child = *mNodes[childIndex].mElement;
@@ -381,12 +376,11 @@ namespace moe::ui {
                             const Rect childRect = body.mAlign == Alignment::kStretch
                                     ? content
                                     : AlignRect(content, size, body.mAlign, body.mAlign);
-                            Arrange(childIndex, childRect, clip, clipRadius);
+                            Arrange(childIndex, childRect, clip);
                         }
                     } else if constexpr (std::is_same_v<T, PaddingData>) {
                         if (!node.mChildren.empty()) {
-                            Arrange(node.mChildren.front(), content.Inset(body.mInsets), clip,
-                                    clipRadius);
+                            Arrange(node.mChildren.front(), content.Inset(body.mInsets), clip);
                         }
                     } else if constexpr (std::is_same_v<T, AlignData>) {
                         if (!node.mChildren.empty()) {
@@ -396,11 +390,11 @@ namespace moe::ui {
                             const glm::vec2 size =
                                     Measure(*mNodes[childIndex].mElement, childStyle, content.Size());
                             Arrange(childIndex, AlignRect(content, size, body.mAlign, body.mAlign),
-                                    clip, clipRadius);
+                                    clip);
                         }
                     } else if constexpr (std::is_same_v<T, ExpandData>) {
                         if (!node.mChildren.empty()) {
-                            Arrange(node.mChildren.front(), content, clip, clipRadius);
+                            Arrange(node.mChildren.front(), content, clip);
                         }
                     } else if constexpr (std::is_same_v<T, ClipData>) {
                         if (!node.mChildren.empty()) {
@@ -413,7 +407,7 @@ namespace moe::ui {
                             const glm::vec2 size = Measure(child, childStyle, content.Size());
                             const Rect childRect{{content.mMin.x, content.mMin.y},
                                     {content.mMin.x + size.x, content.mMin.y + size.y}};
-                            Arrange(childIndex, childRect, &childClip, childRadius);
+                            Arrange(childIndex, childRect, &childClip);
                         }
                     } else if constexpr (std::is_same_v<T, ScrollViewData>) {
                         if (!node.mChildren.empty()) {
@@ -430,7 +424,7 @@ namespace moe::ui {
                                     {content.mMin.x, content.mMin.y - scroll},
                                     {content.mMin.x + content.Width(),
                                             content.mMin.y - scroll + childSize.y}};
-                            Arrange(childIndex, childRect, &childClip, childRadius);
+                            Arrange(childIndex, childRect, &childClip);
                         }
                     }
                 },
@@ -439,7 +433,7 @@ namespace moe::ui {
 
     void Ui::Impl::ArrangeLinear(const UiNode& node, const Rect& content,
             const std::vector<Element>& children, bool horizontal, Justify justify,
-            Alignment align, float gap, const Rect* clip, float clipRadius) {
+            Alignment align, float gap, const Rect* clip) {
         const uint32_t count = static_cast<uint32_t>(node.mChildren.size());
         if (count == 0) {
             return;
@@ -497,7 +491,7 @@ namespace moe::ui {
             const Rect childRect = horizontal
                     ? Rect{{cursor, crossPos}, {cursor + main, crossPos + cross}}
                     : Rect{{crossPos, cursor}, {crossPos + cross, cursor + main}};
-            Arrange(node.mChildren[i], childRect, clip, clipRadius);
+            Arrange(node.mChildren[i], childRect, clip);
             cursor += main + gap + extraGap;
         }
     }

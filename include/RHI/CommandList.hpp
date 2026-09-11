@@ -80,6 +80,10 @@ namespace moe::rhi {
         // rectangle clips everything. Resets to the full area on SetViewport.
         void SetScissor(int32_t x, int32_t y, uint32_t width, uint32_t height);
 
+        // Sets the dynamic stencil reference (front and back faces). Dynamic
+        // state: no pipeline rebuild.
+        void SetStencilReference(uint32_t reference);
+
         void BindVertexBuffer(const Buffer& buffer, uint32_t binding);
         void BindIndexBuffer(const Buffer& buffer);
         void Draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance);

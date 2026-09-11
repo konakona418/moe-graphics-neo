@@ -84,6 +84,7 @@ namespace moe::rhi {
         RasterState mRaster;
         DepthState mDepth;
         StencilOpState mStencil;
+        bool mStencilTestEnable{false};
 
         MultisampleState mMultisample;
 

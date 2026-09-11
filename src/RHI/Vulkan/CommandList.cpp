@@ -59,8 +59,7 @@ namespace moe::rhi {
     void CommandList::CopyImageToBuffer(const Image& image, const Buffer& dst) {
         MOE_PROFILE_ZONE();
         VkBufferImageCopy region{};
-        region.imageSubresource.aspectMask = image.mImpl->mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.aspectMask = ToVkImageAspect(image.mImpl->mFormat);
         region.imageSubresource.mipLevel = 0;
         region.imageSubresource.baseArrayLayer = 0;
         region.imageSubresource.layerCount = 1;
@@ -77,8 +76,7 @@ namespace moe::rhi {
         region.bufferOffset = bufferOffset;
         region.bufferRowLength = 0; // tightly packed
         region.bufferImageHeight = 0;
-        region.imageSubresource.aspectMask = dst.mImpl->mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.aspectMask = ToVkImageAspect(dst.mImpl->mFormat);
         region.imageSubresource.mipLevel = mipLevel;
         region.imageSubresource.baseArrayLayer = baseArrayLayer;
         region.imageSubresource.layerCount = layerCount;
@@ -96,13 +94,11 @@ namespace moe::rhi {
             const Image& dst, ImageLayout dstLayout) {
         MOE_PROFILE_ZONE();
         VkImageCopy region{};
-        region.srcSubresource.aspectMask = src.mImpl->mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        region.srcSubresource.aspectMask = ToVkImageAspect(src.mImpl->mFormat);
         region.srcSubresource.mipLevel = 0;
         region.srcSubresource.baseArrayLayer = 0;
         region.srcSubresource.layerCount = 1;
-        region.dstSubresource.aspectMask = dst.mImpl->mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        region.dstSubresource.aspectMask = ToVkImageAspect(dst.mImpl->mFormat);
         region.dstSubresource.mipLevel = 0;
         region.dstSubresource.baseArrayLayer = 0;
         region.dstSubresource.layerCount = 1;
@@ -115,8 +111,7 @@ namespace moe::rhi {
             const Image& dst, ImageLayout dstLayout, Filter filter) {
         MOE_PROFILE_ZONE();
         VkImageBlit region{};
-        region.srcSubresource.aspectMask = src.mImpl->mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        region.srcSubresource.aspectMask = ToVkImageAspect(src.mImpl->mFormat);
         region.srcSubresource.mipLevel = 0;
         region.srcSubresource.baseArrayLayer = 0;
         region.srcSubresource.layerCount = 1;
@@ -125,8 +120,7 @@ namespace moe::rhi {
                 static_cast<int32_t>(src.mImpl->mWidth),
                 static_cast<int32_t>(src.mImpl->mHeight),
                 static_cast<int32_t>(src.mImpl->mDepth)};
-        region.dstSubresource.aspectMask = dst.mImpl->mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        region.dstSubresource.aspectMask = ToVkImageAspect(dst.mImpl->mFormat);
         region.dstSubresource.mipLevel = 0;
         region.dstSubresource.baseArrayLayer = 0;
         region.dstSubresource.layerCount = 1;
@@ -176,6 +170,9 @@ namespace moe::rhi {
         renderingInfo.colorAttachmentCount = 1;
         renderingInfo.pColorAttachments = &colorAttachment;
         renderingInfo.pDepthAttachment = depth != nullptr ? &depthAttachment : nullptr;
+        // The stencil attachment is a separate slot; without it the stencil
+        // test is a no-op even when the depth attachment has a stencil aspect.
+        renderingInfo.pStencilAttachment = depth != nullptr ? &depthAttachment : nullptr;
         vkCmdBeginRendering(mImpl->mCommandBuffer, &renderingInfo);
     }
 
@@ -232,6 +229,10 @@ namespace moe::rhi {
         vkCmdSetScissor(mImpl->mCommandBuffer, 0, 1, &scissor);
     }
 
+    void CommandList::SetStencilReference(uint32_t reference) {
+        vkCmdSetStencilReference(mImpl->mCommandBuffer, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
+    }
+
     void CommandList::BindVertexBuffer(const Buffer& buffer, uint32_t binding) {
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(mImpl->mCommandBuffer, binding, 1, &buffer.mImpl->mBuffer, &offset);
@@ -279,8 +280,7 @@ namespace moe::rhi {
 
     void CommandList::ImageBarrier(const Image& image, ImageLayout srcLayout, ImageLayout dstLayout,
             const SyncInfo& sync) {
-        const VkImageAspectFlags aspect = image.mImpl->mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        const VkImageAspectFlags aspect = ToVkImageAspect(image.mImpl->mFormat);
         const uint32_t layers = image.mImpl->mType == ImageType::kCube ? 6 : image.mImpl->mLayerCount;
         RecordImageBarrier(mImpl->mCommandBuffer, image.mImpl->mImage, aspect,
                 image.mImpl->mMipLevels, layers, srcLayout, dstLayout, sync);

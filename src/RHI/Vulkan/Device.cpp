@@ -316,8 +316,7 @@ namespace moe::rhi {
                 : info.mType == ImageType::kCube ? VK_IMAGE_VIEW_TYPE_CUBE
                 : VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = ToVkFormat(info.mFormat);
-        viewInfo.subresourceRange.aspectMask = info.mFormat == Format::kD32Float
-                ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.aspectMask = ToVkImageAspect(info.mFormat);
         viewInfo.subresourceRange.baseMipLevel = 0;
         viewInfo.subresourceRange.levelCount = info.mMipLevels;
         viewInfo.subresourceRange.baseArrayLayer = 0;
@@ -625,6 +624,36 @@ namespace moe::rhi {
 
     uint32_t Device::GetMaxSampleCount() const {
         return mImpl != nullptr ? mImpl->mMaxSampleCount : 1;
+    }
+
+    Format Device::GetDepthStencilFormat() const {
+        if (mImpl == nullptr) {
+            return Format::kD32FloatS8Uint;
+        }
+        if (mImpl->mDepthStencilFormat != Format::kUndefined) {
+            return mImpl->mDepthStencilFormat;
+        }
+        // Vulkan guarantees at least one combined depth-stencil format; prefer
+        // the smaller D24_UNORM_S8_UINT, fall back to D32_SFLOAT_S8_UINT.
+        const Format candidates[] = {Format::kD24UnormS8Uint, Format::kD32FloatS8Uint};
+        for (const Format candidate : candidates) {
+            VkPhysicalDeviceImageFormatInfo2 formatInfo{};
+            formatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+            formatInfo.format = ToVkFormat(candidate);
+            formatInfo.type = VK_IMAGE_TYPE_2D;
+            formatInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            formatInfo.usage =
+                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            VkImageFormatProperties2 properties{};
+            properties.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+            if (vkGetPhysicalDeviceImageFormatProperties2(mImpl->mPhysicalDevice, &formatInfo,
+                        &properties) == VK_SUCCESS) {
+                mImpl->mDepthStencilFormat = candidate;
+                return candidate;
+            }
+        }
+        mImpl->mDepthStencilFormat = Format::kD32FloatS8Uint;
+        return mImpl->mDepthStencilFormat;
     }
 
     bool Device::GetVulkanHandles(RhiVulkanHandles& outHandles) const {

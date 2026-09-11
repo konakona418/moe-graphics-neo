@@ -282,6 +282,7 @@ namespace moe::rhi {
                     VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL, VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS,
             };
             depthStencil.depthCompareOp = depthCompareOps[static_cast<uint32_t>(state.mDepth.mCompareOp)];
+            depthStencil.stencilTestEnable = state.mStencilTestEnable ? VK_TRUE : VK_FALSE;
             const VkStencilOp stencilOps[] = {
                     VK_STENCIL_OP_KEEP, VK_STENCIL_OP_ZERO, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_INCREMENT_AND_CLAMP,
                     VK_STENCIL_OP_DECREMENT_AND_CLAMP, VK_STENCIL_OP_INVERT, VK_STENCIL_OP_INCREMENT_AND_WRAP,
@@ -340,6 +341,11 @@ namespace moe::rhi {
             renderingInfo.colorAttachmentCount = static_cast<uint32_t>(colorFormats.size());
             renderingInfo.pColorAttachmentFormats = colorFormats.data();
             renderingInfo.depthAttachmentFormat = ToVkFormat(state.mDepthFormat);
+            // Combined depth-stencil formats must also declare the stencil
+            // attachment format, otherwise the stencil test is ignored.
+            renderingInfo.stencilAttachmentFormat = FormatHasStencil(state.mDepthFormat)
+                    ? ToVkFormat(state.mDepthFormat)
+                    : VK_FORMAT_UNDEFINED;
 
             // viewport/scissor are dynamic (set per draw via CommandList::SetViewport)
             const VkViewport viewport{0, 0, 1, 1, 0, 1};
@@ -351,10 +357,11 @@ namespace moe::rhi {
             viewportState.scissorCount = 1;
             viewportState.pScissors = &scissor;
 
-            const VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+            const VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                    VK_DYNAMIC_STATE_STENCIL_REFERENCE};
             VkPipelineDynamicStateCreateInfo dynamicState{};
             dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-            dynamicState.dynamicStateCount = 2;
+            dynamicState.dynamicStateCount = 3;
             dynamicState.pDynamicStates = dynamicStates;
 
             VkGraphicsPipelineCreateInfo pipelineInfo{};
