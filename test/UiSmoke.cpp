@@ -142,6 +142,60 @@ int main() {
     ui.EndFrame(centered);
     CHECK(clicksA == 1);
 
+    desc.mInput.mCaptured = false;
+
+    // ---- clipping ----
+    // A 10x10 clip around a column of two 10x10 buttons: the second button's
+    // rectangle is under (5, 20) but that point is clipped away.
+    int clipA = 0;
+    int clipB = 0;
+    const Element clipped = Stack({
+            Align(Clip(Column({
+                                Button("a", [&] { ++clipA; }, "clip.a")
+                                        .SetSize(Size::Fixed(10.0f), Size::Fixed(10.0f)),
+                                Button("b", [&] { ++clipB; }, "clip.b")
+                                        .SetSize(Size::Fixed(10.0f), Size::Fixed(10.0f)),
+                        },
+                                Style{.mGap = 5.0f}))
+                            .SetSize(Size::Fixed(10.0f), Size::Fixed(10.0f)),
+                    Alignment::kStart),
+    });
+
+    Click(ui, clipped, desc, {5.0f, 5.0f}, events);
+    CHECK(clipA == 1 && clipB == 0);
+    Click(ui, clipped, desc, {5.0f, 20.0f}, events);
+    CHECK(clipA == 1 && clipB == 0);
+
+    // ---- scrolling ----
+    // A 20x20 viewport over a 48px column: the second item starts below the
+    // viewport (clipped), then a wheel step scrolls it into view.
+    int scrollTop = 0;
+    int scrollBottom = 0;
+    const Element scrollView = Stack({
+            Align(ScrollView(Column({
+                                        Button("top", [&] { ++scrollTop; }, "scroll.top")
+                                                .SetSize(Size::Fixed(20.0f), Size::Fixed(20.0f)),
+                                        Button("bottom", [&] { ++scrollBottom; }, "scroll.bottom")
+                                                .SetSize(Size::Fixed(20.0f), Size::Fixed(20.0f)),
+                                },
+                                        Style{}))
+                            .SetSize(Size::Fixed(20.0f), Size::Fixed(20.0f)),
+                    Alignment::kStart),
+    });
+
+    Click(ui, scrollView, desc, {10.0f, 25.0f}, events);
+    CHECK(scrollTop == 0 && scrollBottom == 0);
+
+    desc.mInput.mPointer = {10.0f, 10.0f};
+    desc.mInput.mScroll = -1.0f; // wheel down (GLFW: positive is wheel up)
+    ui.BeginFrame(desc);
+    ui.EndFrame(scrollView);
+    desc.mInput.mScroll = 0.0f;
+    ui.BeginFrame(desc);
+    ui.EndFrame(scrollView);
+    Click(ui, scrollView, desc, {10.0f, 10.0f}, events);
+    CHECK(scrollBottom == 1 && scrollTop == 0);
+
     std::printf("UI smoke passed.\n");
     return EXIT_SUCCESS;
 }

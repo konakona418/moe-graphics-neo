@@ -1,5 +1,6 @@
 #pragma once
 
+#include <UI/Text.hpp>
 #include <UI/Types.hpp>
 
 #include <Neo/Assets.hpp>
@@ -20,6 +21,7 @@ namespace moe::ui {
         std::optional<float> mGap;
         std::optional<float> mFontSize;
         std::optional<neo::Font> mFont;
+        std::optional<TextLayout> mTextLayout;
     };
 
     // Global defaults shared by every element. The app owns one and may swap it
@@ -33,6 +35,7 @@ namespace moe::ui {
         Insets mPadding{12.0f, 12.0f, 12.0f, 12.0f};
         float mGap{8.0f};
         float mFontSize{20.0f};
+        float mScrollStep{48.0f}; // pixels scrolled per unit of UiInput::mScroll
         neo::Font mFont;
 
         glm::vec4 mButtonColor{0.22f, 0.24f, 0.30f, 1.0f};
@@ -53,6 +56,7 @@ namespace moe::ui {
         float mGap;
         float mFontSize;
         neo::Font mFont;
+        TextLayout mTextLayout{TextLayout::kSingleLine};
     };
 
     ResolvedStyle Resolve(const Theme& theme, const Style& style);

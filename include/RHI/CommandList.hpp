@@ -75,6 +75,11 @@ namespace moe::rhi {
         // Sets the dynamic viewport + scissor to the full (width x height) area.
         void SetViewport(uint32_t width, uint32_t height);
 
+        // Sets the dynamic scissor rectangle (framebuffer pixels, origin at the
+        // top-left, y down). Dynamic state: no pipeline rebuild. A zero-size
+        // rectangle clips everything. Resets to the full area on SetViewport.
+        void SetScissor(int32_t x, int32_t y, uint32_t width, uint32_t height);
+
         void BindVertexBuffer(const Buffer& buffer, uint32_t binding);
         void BindIndexBuffer(const Buffer& buffer);
         void Draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance);

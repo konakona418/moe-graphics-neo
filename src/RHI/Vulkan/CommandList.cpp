@@ -227,6 +227,11 @@ namespace moe::rhi {
         vkCmdSetScissor(mImpl->mCommandBuffer, 0, 1, &scissor);
     }
 
+    void CommandList::SetScissor(int32_t x, int32_t y, uint32_t width, uint32_t height) {
+        const VkRect2D scissor{{x, y}, {width, height}};
+        vkCmdSetScissor(mImpl->mCommandBuffer, 0, 1, &scissor);
+    }
+
     void CommandList::BindVertexBuffer(const Buffer& buffer, uint32_t binding) {
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(mImpl->mCommandBuffer, binding, 1, &buffer.mImpl->mBuffer, &offset);

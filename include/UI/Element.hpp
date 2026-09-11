@@ -86,12 +86,32 @@ namespace moe::ui {
         float mWeight{1.0f};
     };
 
+    // Clips its child (first child used) to this element's content box. Nested
+    // clips intersect (a child is clipped by every clipping ancestor). The
+    // child may overflow its box; overflow is scissored away and is not
+    // hit-testable. Give it a fixed size (Fit clips nothing).
+    struct ClipData {
+        std::vector<Element> mChildren; // first child used
+        Style mStyle;
+    };
+
+    // Fixed viewport (set mWidth/mHeight; Fit clips nothing) with one
+    // scrollable child. A per-id vertical scroll offset is driven by
+    // UiInput::mScroll and clamped to the content. The child is stretched to
+    // the viewport width, clipped to the content box, and scrolled children are
+    // not hit-testable.
+    struct ScrollViewData {
+        std::vector<Element> mChildren; // first child used
+        Style mStyle;
+    };
+
     // A node of the declarative view tree. Plain value type: the tree is
     // rebuilt every frame, never mutated in place across frames. Common fields
     // (size/key/z) live here; the variant carries the element-specific payload.
     struct Element {
         using Body = std::variant<LabelData, ImageData, ButtonData, SpacerData, RowData,
-                ColumnData, StackData, PanelData, PaddingData, AlignData, ExpandData>;
+                ColumnData, StackData, PanelData, PaddingData, AlignData, ExpandData,
+                ClipData, ScrollViewData>;
 
         Body mBody;
         Size mWidth{Size::Fit()};
@@ -229,6 +249,20 @@ namespace moe::ui {
         ExpandData data;
         data.mChildren.push_back(std::move(child));
         data.mWeight = weight;
+        return data;
+    }
+
+    inline Element Clip(Element child, Style style = {}) {
+        ClipData data;
+        data.mChildren.push_back(std::move(child));
+        data.mStyle = detail::NoPadding(style);
+        return data;
+    }
+
+    inline Element ScrollView(Element child, Style style = {}) {
+        ScrollViewData data;
+        data.mChildren.push_back(std::move(child));
+        data.mStyle = detail::NoPadding(style);
         return data;
     }
 }// namespace moe::ui

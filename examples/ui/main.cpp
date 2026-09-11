@@ -210,18 +210,77 @@ namespace {
                 Button("over", [&data] { ++data.mClickCount; }, "demo.over").SetZ(0.5f),
         });
 
+        // Clipping + scrolling. The clipped image is larger than its box, so
+        // its overflow is scissored away; the scroll view holds a tall column
+        // in a fixed viewport (wheel over it).
+        Element clipped = Clip(
+                Image(data.mTexture).SetSize(Size::Fixed(200.0f), Size::Fixed(140.0f)),
+                Style{.mBackground = glm::vec4(0.08f, 0.09f, 0.12f, 1.0f), .mRadius = 8.0f,
+                        .mBorderWidth = 1.0f, .mPadding = Insets::All(8.0f)})
+                                  .SetSize(Size::Fixed(120.0f), Size::Fixed(84.0f));
+
+        Element list = Column(
+                {
+                        Button("scroll item 1", [&data] { ++data.mClickCount; }, "demo.scroll1"),
+                        Button("scroll item 2", [&data] { ++data.mClickCount; }, "demo.scroll2"),
+                        Button("scroll item 3", [&data] { ++data.mClickCount; }, "demo.scroll3"),
+                        Button("scroll item 4", [&data] { ++data.mClickCount; }, "demo.scroll4"),
+                        Button("scroll item 5", [&data] { ++data.mClickCount; }, "demo.scroll5"),
+                        Button("scroll item 6", [&data] { ++data.mClickCount; }, "demo.scroll6"),
+                },
+                Style{.mGap = 6.0f});
+        Element scroller = ScrollView(list,
+                Style{.mBackground = glm::vec4(0.09f, 0.10f, 0.14f, 1.0f), .mRadius = 8.0f,
+                        .mBorderWidth = 1.0f, .mPadding = Insets::All(10.0f)})
+                                   .SetSize(Size::Fixed(260.0f), Size::Fixed(150.0f));
+
+        Element clips = Row({clipped, scroller}, Style{.mGap = 16.0f});
+
+        const std::string gettysburg =
+                "Four score and seven years ago our fathers brought forth on this continent, "
+                "a new nation, conceived in Liberty, and dedicated to the proposition that "
+                "all men are created equal. Now we are engaged in a great civil war, testing "
+                "whether that nation, or any nation so conceived and so dedicated, can long "
+                "endure. We are met on a great battle-field of that war. We have come to "
+                "dedicate a portion of that field, as a final resting place for those who "
+                "here gave their lives that that nation might live.";
+
+        // kWrap: a fixed-height clip so the wrapped text visibly overflows and
+        // is scissored away. Padding >= radius keeps the text clear of the
+        // conservative scissor inset; the label fills the content width so its
+        // wrap width matches. Align keeps the clip's fixed size.
+        Element textLayouts = Align(
+                Clip(Label(gettysburg, Style{.mTextLayout = TextLayout::kWrap}),
+                        Style{.mBackground = glm::vec4(0.10f, 0.11f, 0.15f, 1.0f),
+                                .mRadius = 8.0f, .mBorderWidth = 1.0f,
+                                .mPadding = Insets::All(8.0f)})
+                        .SetSize(Size::Fixed(240.0f), Size::Fixed(150.0f)),
+                Alignment::kStart);
+
+        // kEllipsis: one line, truncated with "..." (shown under the header).
+        Element truncated = Align(
+                Label(gettysburg, Style{.mTextLayout = TextLayout::kEllipsis})
+                        .SetWidth(Size::Fixed(340.0f)),
+                Alignment::kStart);
+
         Element body = Column(
                 {
                         header,
+                        truncated,
                         buttons,
                         gallery,
                         overlap,
+                        clips,
+                        textLayouts,
                         Align(Label("centered horizontally"), Alignment::kCenter),
                 },
                 Style{.mGap = 16.0f});
 
-        // Centered so a tilt/offset excursion stays on screen.
-        return Padding(Align(body, Alignment::kCenter), Insets::All(24.0f));
+        // Centered so a tilt/offset excursion stays on screen. The whole page
+        // scrolls when the content is taller than the viewport (radius 0 so the
+        // conservative scissor does not trim the page edges).
+        return ScrollView(Padding(Align(body, Alignment::kCenter), Insets::All(24.0f)),
+                Style{.mRadius = 0.0f});
     }
 
     bool Setup(void* userdata, examples::AppContext& ctx) {
@@ -301,6 +360,7 @@ namespace {
         desc.mInput.mPrimaryDown = mouse.mButtonDown[0];
         desc.mInput.mPrimaryPressed = mouse.mButtonPressed[0];
         desc.mInput.mPrimaryReleased = mouse.mButtonReleased[0];
+        desc.mInput.mScroll = mouse.mScrollY;
         desc.mInput.mCaptured = ImGui::GetIO().WantCaptureMouse;
 
         data->mUi.BeginFrame(desc);
@@ -341,7 +401,8 @@ namespace {
         ImGui::Text("clicks: %d", data->mClickCount);
         ImGui::TextWrapped("Move the pointer: the layer follows it, with nearer elements "
                            "(higher z) shifting more. The screen pointer is unprojected "
-                           "onto the UI plane so clicks track the tilt.");
+                           "onto the UI plane so clicks track the tilt. Wheel over the "
+                           "scroll view to scroll its clipped contents.");
         ImGui::End();
     }
 

@@ -35,6 +35,13 @@ namespace moe::ui {
             return codepoint;
         }
 
+        // Intersects two rectangles; may be empty (min > max), which callers
+        // treat as "clips everything".
+        Rect Intersect(const Rect& a, const Rect& b) {
+            return {{std::max(a.mMin.x, b.mMin.x), std::max(a.mMin.y, b.mMin.y)},
+                    {std::min(a.mMax.x, b.mMax.x), std::min(a.mMax.y, b.mMax.y)}};
+        }
+
         // Places `size` inside `box` per the axis alignments (Stretch fills).
         Rect AlignRect(const Rect& box, const glm::vec2& size, Alignment horizontal,
                 Alignment vertical) {
@@ -54,23 +61,15 @@ namespace moe::ui {
             }
             return {{x, y}, {x + width, y + height}};
         }
-    }// namespace
 
-    glm::vec2 MeasureText(const neo::FontData& font, std::string_view text, float pixelSize) {
-        const float scale = font.GetScaleForPixelHeight(pixelSize);
-        const float lineHeight = font.GetLineAdvance() * scale;
-        float maxWidth = 0.0f;
-        float lineWidth = 0.0f;
+    // Advance width of one line (no newline handling).
+    float LineAdvanceWidth(const neo::FontData& font, std::string_view text, float scale) {
+        float width = 0.0f;
         uint32_t previous = 0;
         bool hasPrevious = false;
-        int lines = 1;
         for (size_t i = 0; i < text.size();) {
             const uint32_t codepoint = DecodeUtf8(text, i);
-            if (codepoint == '\n') {
-                maxWidth = std::max(maxWidth, lineWidth);
-                lineWidth = 0.0f;
-                hasPrevious = false;
-                ++lines;
+            if (codepoint == '\n' || codepoint == '\r') {
                 continue;
             }
             const neo::Glyph* glyph = font.FindGlyph(codepoint);
@@ -78,14 +77,171 @@ namespace moe::ui {
                 continue;
             }
             if (hasPrevious) {
-                lineWidth += font.GetKernAdvance(previous, codepoint) * scale;
+                width += font.GetKernAdvance(previous, codepoint) * scale;
             }
-            lineWidth += glyph->mAdvance * scale;
+            width += glyph->mAdvance * scale;
             previous = codepoint;
             hasPrevious = true;
         }
-        maxWidth = std::max(maxWidth, lineWidth);
-        return {maxWidth, lineHeight * static_cast<float>(lines)};
+        return width;
+    }
+
+    // Measures a text element for the layout pass, applying its TextLayout
+    // within the available width.
+    glm::vec2 MeasureTextElement(const Element& element, const ResolvedStyle& style,
+            std::string_view text, const glm::vec2& available) {
+        const float horizontalPadding = style.mPadding.mLeft + style.mPadding.mRight;
+        float maxWidth = 0.0f;
+        if (style.mTextLayout != TextLayout::kSingleLine) {
+            const float width = element.mWidth.mKind == Size::Kind::kFixed
+                    ? element.mWidth.mValue
+                    : available.x;
+            maxWidth = std::max(0.0f, width - horizontalPadding);
+        }
+        const TextMetrics metrics =
+                MeasureText(style.mFont, text, style.mFontSize, style.mTextLayout, maxWidth);
+        glm::vec2 size = metrics.mSize;
+        if (style.mTextLayout == TextLayout::kWrap && maxWidth > 0.0f
+                && element.mWidth.mKind != Size::Kind::kFixed) {
+            // Fill the available width so the laid-out box matches the wrap width.
+            size.x = maxWidth;
+        }
+        return size;
+    }
+    }// namespace
+
+    TextMetrics MeasureText(const neo::Font& fontAsset, std::string_view text, float pixelSize,
+            TextLayout layout, float maxWidth) {
+        TextMetrics metrics;
+        const neo::FontData* fontPtr = fontAsset.GetData();
+        if (fontPtr == nullptr) {
+            return metrics;
+        }
+        const neo::FontData& font = *fontPtr;
+        const float scale = font.GetScaleForPixelHeight(pixelSize);
+        metrics.mLineHeight = font.GetLineAdvance() * scale;
+        if (scale <= 0.0f) {
+            return metrics;
+        }
+
+        // Explicit newlines split the text into paragraphs first.
+        std::vector<std::string_view> paragraphs;
+        size_t paragraphStart = 0;
+        for (size_t i = 0; i <= text.size(); ++i) {
+            if (i == text.size() || text[i] == '\n') {
+                paragraphs.push_back(text.substr(paragraphStart, i - paragraphStart));
+                paragraphStart = i + 1;
+            }
+        }
+
+        const auto pushLine = [&](std::string line) {
+            const float width = LineAdvanceWidth(font, line, scale);
+            metrics.mSize.x = std::max(metrics.mSize.x, width);
+            metrics.mLines.push_back({std::move(line), width});
+        };
+
+        if (layout == TextLayout::kEllipsis && maxWidth > 0.0f) {
+            const std::string_view paragraph =
+                    paragraphs.empty() ? std::string_view{} : paragraphs.front();
+            const float full = LineAdvanceWidth(font, paragraph, scale);
+            if (full <= maxWidth) {
+                pushLine(std::string(paragraph));
+            } else {
+                const float dots = LineAdvanceWidth(font, "...", scale);
+                std::string line;
+                float width = 0.0f;
+                uint32_t previous = 0;
+                bool hasPrevious = false;
+                size_t i = 0;
+                while (i < paragraph.size()) {
+                    const size_t before = i;
+                    const uint32_t codepoint = DecodeUtf8(paragraph, i);
+                    const neo::Glyph* glyph = font.FindGlyph(codepoint);
+                    if (glyph == nullptr) {
+                        continue;
+                    }
+                    float advance = glyph->mAdvance * scale;
+                    if (hasPrevious) {
+                        advance += font.GetKernAdvance(previous, codepoint) * scale;
+                    }
+                    if (width + advance + dots > maxWidth) {
+                        break;
+                    }
+                    line.append(paragraph.substr(before, i - before));
+                    width += advance;
+                    previous = codepoint;
+                    hasPrevious = true;
+                }
+                line += "...";
+                pushLine(std::move(line));
+            }
+            metrics.mSize.y = metrics.mLineHeight * static_cast<float>(metrics.mLines.size());
+            return metrics;
+        }
+
+        if (layout == TextLayout::kWrap && maxWidth > 0.0f) {
+            for (const std::string_view paragraph : paragraphs) {
+                std::vector<std::string_view> words;
+                size_t wordStart = 0;
+                for (size_t i = 0; i <= paragraph.size(); ++i) {
+                    if (i == paragraph.size() || paragraph[i] == ' ') {
+                        if (i > wordStart) {
+                            words.push_back(paragraph.substr(wordStart, i - wordStart));
+                        }
+                        wordStart = i + 1;
+                    }
+                }
+                std::string line;
+                float lineWidth = 0.0f;
+                for (const std::string_view word : words) {
+                    const float wordWidth = LineAdvanceWidth(font, word, scale);
+                    const float spaceWidth =
+                            line.empty() ? 0.0f : LineAdvanceWidth(font, " ", scale);
+                    if (!line.empty() && lineWidth + spaceWidth + wordWidth > maxWidth) {
+                        pushLine(std::move(line));
+                        line.clear();
+                        lineWidth = 0.0f;
+                    }
+                    if (line.empty() && wordWidth > maxWidth) {
+                        // Break an oversized word by character.
+                        size_t i = 0;
+                        while (i < word.size()) {
+                            const size_t before = i;
+                            const uint32_t codepoint = DecodeUtf8(word, i);
+                            const neo::Glyph* glyph = font.FindGlyph(codepoint);
+                            if (glyph == nullptr) {
+                                continue;
+                            }
+                            const float advance = glyph->mAdvance * scale;
+                            if (!line.empty() && lineWidth + advance > maxWidth) {
+                                pushLine(std::move(line));
+                                line.clear();
+                                lineWidth = 0.0f;
+                            }
+                            line.append(word.substr(before, i - before));
+                            lineWidth += advance;
+                        }
+                    } else {
+                        if (!line.empty()) {
+                            line += ' ';
+                            lineWidth += spaceWidth;
+                        }
+                        line += std::string(word);
+                        lineWidth += wordWidth;
+                    }
+                }
+                pushLine(std::move(line));
+            }
+            metrics.mSize.y = metrics.mLineHeight * static_cast<float>(metrics.mLines.size());
+            return metrics;
+        }
+
+        // kSingleLine (or no width): explicit breaks only.
+        for (const std::string_view paragraph : paragraphs) {
+            pushLine(std::string(paragraph));
+        }
+        metrics.mSize.y = metrics.mLineHeight * static_cast<float>(metrics.mLines.size());
+        return metrics;
     }
 
     glm::vec2 Ui::Impl::Measure(const Element& element, const ResolvedStyle& style,
@@ -95,18 +251,14 @@ namespace moe::ui {
                 [&](const auto& body) {
                     using T = std::decay_t<decltype(body)>;
                     if constexpr (std::is_same_v<T, LabelData>) {
-                        if (const neo::FontData* font = style.mFont.GetData()) {
-                            intrinsic = MeasureText(*font, body.mText, style.mFontSize);
-                        }
+                        intrinsic = MeasureTextElement(element, style, body.mText, available);
                     } else if constexpr (std::is_same_v<T, ImageData>) {
                         if (neo::UploadedTexture* texture = mAssets->GetTexture(body.mTexture)) {
                             intrinsic = {static_cast<float>(texture->mImage.GetWidth()),
                                     static_cast<float>(texture->mImage.GetHeight())};
                         }
                     } else if constexpr (std::is_same_v<T, ButtonData>) {
-                        if (const neo::FontData* font = style.mFont.GetData()) {
-                            intrinsic = MeasureText(*font, body.mText, style.mFontSize);
-                        }
+                        intrinsic = MeasureTextElement(element, style, body.mText, available);
                     } else if constexpr (std::is_same_v<T, SpacerData>) {
                         intrinsic = body.mSize.mKind == Size::Kind::kFixed
                                 ? glm::vec2(body.mSize.mValue)
@@ -138,7 +290,9 @@ namespace moe::ui {
                                                 body.mInsets.mTop + body.mInsets.mBottom);
                         }
                     } else if constexpr (std::is_same_v<T, AlignData>
-                            || std::is_same_v<T, ExpandData>) {
+                            || std::is_same_v<T, ExpandData>
+                            || std::is_same_v<T, ClipData>
+                            || std::is_same_v<T, ScrollViewData>) {
                         if (!body.mChildren.empty()) {
                             const Element& child = body.mChildren.front();
                             const ResolvedStyle childStyle = Resolve(mTheme, ElementStyle(child));
@@ -177,12 +331,31 @@ namespace moe::ui {
         return horizontal ? glm::vec2(main, cross) : glm::vec2(cross, main);
     }
 
-    void Ui::Impl::Arrange(uint32_t index, const Rect& rect) {
+    void Ui::Impl::Arrange(uint32_t index, const Rect& rect, const Rect* clip,
+            float clipRadius) {
         UiNode& node = mNodes[index];
         node.mRect = rect;
+        if (clip != nullptr) {
+            node.mClip = *clip;
+            node.mHasClip = true;
+            node.mClipRadius = clipRadius;
+        }
         const Element& element = *node.mElement;
         const ResolvedStyle& style = node.mStyle;
         const Rect content = rect.Inset(style.mPadding);
+
+        // Clipping containers define a new clip in offset space: the layer
+        // offset is applied per element by z, so the box moves with it. The
+        // container's own drawing (background/border) is clipped by its
+        // ancestors only; children are clipped to the content box and inherit
+        // the container's corner radius (the scissor insets by it).
+        const glm::vec2 offset = mFrame.mOffset * (1.0f + element.mZ);
+        const Rect offsetBox = rect.Offset(offset);
+        // Children are clipped to the container's border box; the scissor then
+        // insets by the corner radius. A padding at least as large as the
+        // radius therefore keeps the content clear of the trim.
+        const Rect childClip = clip != nullptr ? Intersect(*clip, offsetBox) : offsetBox;
+        const float childRadius = std::max(clipRadius, style.mRadius);
 
         std::visit(
                 [&](const auto& body) {
@@ -190,15 +363,15 @@ namespace moe::ui {
                     if constexpr (std::is_same_v<T, RowData>) {
                         const float gap = body.mGap >= 0.0f ? body.mGap : style.mGap;
                         ArrangeLinear(node, content, body.mChildren, true, body.mJustify,
-                                body.mAlign, gap);
+                                body.mAlign, gap, clip, clipRadius);
                     } else if constexpr (std::is_same_v<T, ColumnData>) {
                         const float gap = body.mGap >= 0.0f ? body.mGap : style.mGap;
                         ArrangeLinear(node, content, body.mChildren, false, body.mJustify,
-                                body.mAlign, gap);
+                                body.mAlign, gap, clip, clipRadius);
                     } else if constexpr (std::is_same_v<T, PanelData>) {
                         const float gap = body.mGap >= 0.0f ? body.mGap : style.mGap;
                         ArrangeLinear(node, content, body.mChildren, false, Justify::kStart,
-                                Alignment::kStretch, gap);
+                                Alignment::kStretch, gap, clip, clipRadius);
                     } else if constexpr (std::is_same_v<T, StackData>) {
                         for (uint32_t childIndex : node.mChildren) {
                             const Element& child = *mNodes[childIndex].mElement;
@@ -208,11 +381,12 @@ namespace moe::ui {
                             const Rect childRect = body.mAlign == Alignment::kStretch
                                     ? content
                                     : AlignRect(content, size, body.mAlign, body.mAlign);
-                            Arrange(childIndex, childRect);
+                            Arrange(childIndex, childRect, clip, clipRadius);
                         }
                     } else if constexpr (std::is_same_v<T, PaddingData>) {
                         if (!node.mChildren.empty()) {
-                            Arrange(node.mChildren.front(), content.Inset(body.mInsets));
+                            Arrange(node.mChildren.front(), content.Inset(body.mInsets), clip,
+                                    clipRadius);
                         }
                     } else if constexpr (std::is_same_v<T, AlignData>) {
                         if (!node.mChildren.empty()) {
@@ -221,11 +395,42 @@ namespace moe::ui {
                                     Resolve(mTheme, ElementStyle(*mNodes[childIndex].mElement));
                             const glm::vec2 size =
                                     Measure(*mNodes[childIndex].mElement, childStyle, content.Size());
-                            Arrange(childIndex, AlignRect(content, size, body.mAlign, body.mAlign));
+                            Arrange(childIndex, AlignRect(content, size, body.mAlign, body.mAlign),
+                                    clip, clipRadius);
                         }
                     } else if constexpr (std::is_same_v<T, ExpandData>) {
                         if (!node.mChildren.empty()) {
-                            Arrange(node.mChildren.front(), content);
+                            Arrange(node.mChildren.front(), content, clip, clipRadius);
+                        }
+                    } else if constexpr (std::is_same_v<T, ClipData>) {
+                        if (!node.mChildren.empty()) {
+                            const uint32_t childIndex = node.mChildren.front();
+                            const Element& child = *mNodes[childIndex].mElement;
+                            const ResolvedStyle childStyle =
+                                    Resolve(mTheme, ElementStyle(child));
+                            // Keep the child's own size at the content origin so
+                            // it can overflow (that is the point of a clip).
+                            const glm::vec2 size = Measure(child, childStyle, content.Size());
+                            const Rect childRect{{content.mMin.x, content.mMin.y},
+                                    {content.mMin.x + size.x, content.mMin.y + size.y}};
+                            Arrange(childIndex, childRect, &childClip, childRadius);
+                        }
+                    } else if constexpr (std::is_same_v<T, ScrollViewData>) {
+                        if (!node.mChildren.empty()) {
+                            const uint32_t childIndex = node.mChildren.front();
+                            const Element& child = *mNodes[childIndex].mElement;
+                            const ResolvedStyle childStyle =
+                                    Resolve(mTheme, ElementStyle(child));
+                            const glm::vec2 childSize = Measure(child, childStyle, content.Size());
+                            float& scroll = mScrollState[node.mId];
+                            const float maxScroll =
+                                    std::max(0.0f, childSize.y - content.Height());
+                            scroll = std::clamp(scroll, 0.0f, maxScroll);
+                            const Rect childRect{
+                                    {content.mMin.x, content.mMin.y - scroll},
+                                    {content.mMin.x + content.Width(),
+                                            content.mMin.y - scroll + childSize.y}};
+                            Arrange(childIndex, childRect, &childClip, childRadius);
                         }
                     }
                 },
@@ -234,7 +439,7 @@ namespace moe::ui {
 
     void Ui::Impl::ArrangeLinear(const UiNode& node, const Rect& content,
             const std::vector<Element>& children, bool horizontal, Justify justify,
-            Alignment align, float gap) {
+            Alignment align, float gap, const Rect* clip, float clipRadius) {
         const uint32_t count = static_cast<uint32_t>(node.mChildren.size());
         if (count == 0) {
             return;
@@ -292,7 +497,7 @@ namespace moe::ui {
             const Rect childRect = horizontal
                     ? Rect{{cursor, crossPos}, {cursor + main, crossPos + cross}}
                     : Rect{{crossPos, cursor}, {crossPos + cross, cursor + main}};
-            Arrange(node.mChildren[i], childRect);
+            Arrange(node.mChildren[i], childRect, clip, clipRadius);
             cursor += main + gap + extraGap;
         }
     }

@@ -205,11 +205,38 @@ namespace moe::ui {
             node.mHovered = false;
         }
 
+        // Wheel input: the topmost scroll view under the pointer consumes it.
+        // The new offset is applied by the next frame's arrange (one-frame
+        // latency, like every other input-driven layout change).
+        if (!mFrame.mInput.mCaptured && mFrame.mInput.mScroll != 0.0f) {
+            for (auto it = mNodes.rbegin(); it != mNodes.rend(); ++it) {
+                UiNode& node = *it;
+                if (!std::holds_alternative<ScrollViewData>(node.mElement->mBody)) {
+                    continue;
+                }
+                const Rect viewport = node.mRect.Inset(node.mStyle.mPadding)
+                        .Offset(mFrame.mOffset * (1.0f + node.mElement->mZ));
+                if (!viewport.Contains(mFrame.mInput.mPointer)) {
+                    continue;
+                }
+                if (node.mHasClip && !node.mClip.Contains(mFrame.mInput.mPointer)) {
+                    continue;
+                }
+                mScrollState[node.mId] -= mFrame.mInput.mScroll * mTheme.mScrollStep;
+                break;
+            }
+        }
+
         uint64_t hoveredId = 0;
         if (!mFrame.mInput.mCaptured) {
             for (auto it = mNodes.rbegin(); it != mNodes.rend(); ++it) {
                 UiNode& node = *it;
                 if (!node.mElement->mEnabled || !IsInteractive(*node.mElement)) {
+                    continue;
+                }
+                // A point clipped away by any ancestor must not hit, even if it
+                // is inside the element's own (unclipped) rectangle.
+                if (node.mHasClip && !node.mClip.Contains(mFrame.mInput.mPointer)) {
                     continue;
                 }
                 const Rect hitRect = node.mRect.Offset(

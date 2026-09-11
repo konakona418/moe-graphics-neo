@@ -27,6 +27,16 @@ namespace moe::ui {
         int32_t mParent{-1};
         std::vector<uint32_t> mChildren;
         Rect mRect; // border box in logical pixels, filled by arrange
+        // Effective clip (offset space, logical pixels): the intersection of
+        // every clipping ancestor's box. Empty/false when unclipped. Used by
+        // hit-testing (a clipped-away point must not hit) and by paint.
+        Rect mClip;
+        bool mHasClip{false};
+        // Corner radius of the clip shape. The scissor is a rectangle, so it is
+        // inset by this much on every side (the largest axis-aligned rectangle
+        // inside the rounded clip): no corner leak, at the cost of trimming the
+        // straight edges by the same amount.
+        float mClipRadius{0.0f};
         bool mHovered{false};
     };
 
@@ -43,6 +53,9 @@ namespace moe::ui {
         neo::TextureHandle mTexture;
         uint32_t mFirstVertex{0};
         uint32_t mVertexCount{0};
+        Rect mClip;
+        bool mHasClip{false};
+        float mClipRadius{0.0f};
     };
 
     struct UiTextCmd {
@@ -52,6 +65,9 @@ namespace moe::ui {
         float mFontSize{0.0f};
         glm::vec2 mPos{0.0f};
         float mZ{0.0f};
+        Rect mClip;
+        bool mHasClip{false};
+        float mClipRadius{0.0f};
     };
 
     // Paint order is a single command list: rect batches and text draws
@@ -106,6 +122,7 @@ namespace moe::ui {
 
         std::vector<UiNode> mNodes;
         std::unordered_map<uint64_t, bool> mHoverState; // persisted across frames
+        std::unordered_map<uint64_t, float> mScrollState; // persisted across frames
         uint64_t mActiveId{0};
 
         std::vector<UiVertex> mVertices;
@@ -127,20 +144,19 @@ namespace moe::ui {
                 const glm::vec2& available);
         glm::vec2 MeasureLinear(const std::vector<Element>& children, const ResolvedStyle& style,
                 const glm::vec2& available, bool horizontal, float gap);
-        void Arrange(uint32_t index, const Rect& rect);
+        void Arrange(uint32_t index, const Rect& rect, const Rect* clip = nullptr,
+                float clipRadius = 0.0f);
         void ArrangeLinear(const UiNode& node, const Rect& content,
                 const std::vector<Element>& children, bool horizontal, Justify justify,
-                Alignment align, float gap);
+                Alignment align, float gap, const Rect* clip, float clipRadius);
 
         // Render.cpp
         void BuildDrawList();
         void PushRect(const Rect& rect, const glm::vec4& color, float radius, float borderWidth,
-                int mode, float z, neo::TextureHandle texture);
+                int mode, float z, neo::TextureHandle texture, const Rect* clip,
+                float clipRadius);
         void PushText(const Rect& box, const ResolvedStyle& style, std::string_view text,
-                Alignment align, float z);
+                Alignment align, float z, const Rect* clip, float clipRadius);
         void Record(neo::Renderer& renderer);
     };
-
-    // Measures a UTF-8 string with a font at the given pixel height (Layout.cpp).
-    glm::vec2 MeasureText(const neo::FontData& font, std::string_view text, float pixelSize);
 }// namespace moe::ui

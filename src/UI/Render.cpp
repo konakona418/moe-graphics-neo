@@ -5,8 +5,10 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 
 namespace moe::ui {
@@ -22,6 +24,11 @@ namespace moe::ui {
         bool SameTexture(const neo::TextureHandle& a, const neo::TextureHandle& b) {
             return a.mIndex == b.mIndex && a.mGeneration == b.mGeneration;
         }
+
+        bool SameRect(const Rect& a, const Rect& b) {
+            return a.mMin.x == b.mMin.x && a.mMin.y == b.mMin.y && a.mMax.x == b.mMax.x
+                    && a.mMax.y == b.mMax.y;
+        }
     }// namespace
 
     void Ui::Impl::BuildDrawList() {
@@ -33,14 +40,17 @@ namespace moe::ui {
         for (const UiNode& node : mNodes) {
             const Element& element = *node.mElement;
             const ResolvedStyle& style = node.mStyle;
+            const Rect* clip = node.mHasClip ? &node.mClip : nullptr;
+            const float clipRadius = node.mClipRadius;
             std::visit(
                     [&](const auto& body) {
                         using T = std::decay_t<decltype(body)>;
                         if constexpr (std::is_same_v<T, LabelData>) {
-                            PushText(node.mRect, style, body.mText, body.mAlign, element.mZ);
+                            PushText(node.mRect, style, body.mText, body.mAlign, element.mZ,
+                                    clip, clipRadius);
                         } else if constexpr (std::is_same_v<T, ImageData>) {
                             PushRect(node.mRect, body.mTint, 0.0f, 0.0f, 0, element.mZ,
-                                    body.mTexture);
+                                    body.mTexture, clip, clipRadius);
                         } else if constexpr (std::is_same_v<T, ButtonData>) {
                             glm::vec4 background = mTheme.mButtonColor;
                             if (node.mHovered) {
@@ -53,23 +63,39 @@ namespace moe::ui {
                                 background = *body.mStyle.mBackground;
                             }
                             PushRect(node.mRect, background, style.mRadius, style.mBorderWidth, 1,
-                                    element.mZ, mWhite);
+                                    element.mZ, mWhite, clip, clipRadius);
                             if (style.mBorderWidth > 0.0f) {
                                 PushRect(node.mRect, style.mBorderColor, style.mRadius,
-                                        style.mBorderWidth, 2, element.mZ, mWhite);
+                                        style.mBorderWidth, 2, element.mZ, mWhite, clip,
+                                        clipRadius);
                             }
                             ResolvedStyle textStyle = style;
                             if (!body.mStyle.mTextColor) {
                                 textStyle.mTextColor = mTheme.mButtonText;
                             }
                             PushText(node.mRect.Inset(style.mPadding), textStyle, body.mText,
-                                    Alignment::kCenter, element.mZ);
+                                    Alignment::kCenter, element.mZ, clip, clipRadius);
                         } else if constexpr (std::is_same_v<T, PanelData>) {
                             PushRect(node.mRect, style.mBackground, style.mRadius,
-                                    style.mBorderWidth, 1, element.mZ, mWhite);
+                                    style.mBorderWidth, 1, element.mZ, mWhite, clip, clipRadius);
                             if (style.mBorderWidth > 0.0f) {
                                 PushRect(node.mRect, style.mBorderColor, style.mRadius,
-                                        style.mBorderWidth, 2, element.mZ, mWhite);
+                                        style.mBorderWidth, 2, element.mZ, mWhite, clip,
+                                        clipRadius);
+                            }
+                        } else if constexpr (std::is_same_v<T, ClipData>
+                                || std::is_same_v<T, ScrollViewData>) {
+                            // Opt-in background: painted only when the element
+                            // asks for one, so a bare Clip stays invisible.
+                            if (body.mStyle.mBackground) {
+                                PushRect(node.mRect, *body.mStyle.mBackground, style.mRadius,
+                                        style.mBorderWidth, 1, element.mZ, mWhite, clip,
+                                        clipRadius);
+                            }
+                            if (style.mBorderWidth > 0.0f) {
+                                PushRect(node.mRect, style.mBorderColor, style.mRadius,
+                                        style.mBorderWidth, 2, element.mZ, mWhite, clip,
+                                        clipRadius);
                             }
                         }
                     },
@@ -78,7 +104,8 @@ namespace moe::ui {
     }
 
     void Ui::Impl::PushRect(const Rect& rect, const glm::vec4& color, float radius,
-            float borderWidth, int mode, float z, neo::TextureHandle texture) {
+            float borderWidth, int mode, float z, neo::TextureHandle texture, const Rect* clip,
+            float clipRadius) {
         if (rect.Width() <= 0.0f || rect.Height() <= 0.0f) {
             return;
         }
@@ -94,28 +121,34 @@ namespace moe::ui {
         for (const int k : order) {
             mVertices.push_back({corners[k], uvs[k], color, rectData, params});
         }
+        const bool hasClip = clip != nullptr;
+        const Rect clipRect = hasClip ? *clip : Rect{};
         if (!mCommands.empty() && mCommands.back().mType == UiCmdType::kRects) {
             UiRectBatch& last = mBatches[mCommands.back().mIndex];
             if (last.mFirstVertex + last.mVertexCount == first
-                    && SameTexture(last.mTexture, texture)) {
+                    && SameTexture(last.mTexture, texture) && last.mHasClip == hasClip
+                    && (!hasClip
+                            || (SameRect(last.mClip, clipRect)
+                                    && last.mClipRadius == clipRadius))) {
                 last.mVertexCount += 6;
                 return;
             }
         }
-        mBatches.push_back({texture, first, 6});
+        mBatches.push_back({texture, first, 6, clipRect, hasClip, clipRadius});
         mCommands.push_back({UiCmdType::kRects, static_cast<uint32_t>(mBatches.size() - 1)});
     }
 
     void Ui::Impl::PushText(const Rect& box, const ResolvedStyle& style, std::string_view text,
-            Alignment align, float z) {
+            Alignment align, float z, const Rect* clip, float clipRadius) {
         if (text.empty() || !style.mFont.IsValid()) {
             return;
         }
-        const neo::FontData* font = style.mFont.GetData();
-        if (font == nullptr) {
+        const TextMetrics metrics =
+                MeasureText(style.mFont, text, style.mFontSize, style.mTextLayout, box.Width());
+        if (metrics.mLines.empty()) {
             return;
         }
-        const glm::vec2 size = MeasureText(*font, text, style.mFontSize);
+        const glm::vec2 size = metrics.mSize;
         float x = box.mMin.x;
         if (align == Alignment::kCenter) {
             x = box.mMin.x + (box.Width() - size.x) * 0.5f;
@@ -124,13 +157,24 @@ namespace moe::ui {
         }
         const float y = box.mMin.y + (box.Height() - size.y) * 0.5f;
 
+        std::string laidOut;
+        for (size_t i = 0; i < metrics.mLines.size(); ++i) {
+            if (i != 0) {
+                laidOut += '\n';
+            }
+            laidOut += metrics.mLines[i].mText;
+        }
+
         UiTextCmd command;
         command.mFont = style.mFont;
-        command.mText = std::string(text);
+        command.mText = std::move(laidOut);
         command.mColor = style.mTextColor;
         command.mFontSize = style.mFontSize;
         command.mPos = {x, y};
         command.mZ = z;
+        command.mHasClip = clip != nullptr;
+        command.mClip = clip != nullptr ? *clip : Rect{};
+        command.mClipRadius = clipRadius;
         mTexts.push_back(std::move(command));
         mCommands.push_back({UiCmdType::kText, static_cast<uint32_t>(mTexts.size() - 1)});
     }
@@ -176,6 +220,75 @@ namespace moe::ui {
             const int32_t pcViewProj = context.GetPushConstant(*program, "viewProj");
             const int32_t pcOffset = context.GetPushConstant(*program, "offset");
 
+            // Clip -> framebuffer scissor. The clip is already in offset space,
+            // so it only needs the view projection: transform its four corners,
+            // perspective-divide and take the pixel AABB. The scissor is a
+            // rectangle, so the clip is first inset by its corner radius (the
+            // largest axis-aligned rectangle inside the rounded shape): no
+            // corner leak, at the cost of trimming the straight edges by the
+            // same amount. Exact for an axis-aligned projection, an
+            // over-approximation under a 3D tilt.
+            const glm::vec2 targetSize{static_cast<float>(mFrame.mWidth),
+                    static_cast<float>(mFrame.mHeight)};
+            const auto clipToScissor = [&](const Rect& clip, float radius, int32_t& x,
+                                               int32_t& y, uint32_t& width, uint32_t& height) {
+                const Rect inset = radius > 0.0f ? clip.Inset(Insets::All(radius)) : clip;
+                if (inset.Width() <= 0.0f || inset.Height() <= 0.0f) {
+                    x = 0;
+                    y = 0;
+                    width = 0;
+                    height = 0;
+                    return;
+                }
+                const glm::vec2 corners[4] = {inset.mMin, {inset.mMax.x, inset.mMin.y},
+                        inset.mMax, {inset.mMin.x, inset.mMax.y}};
+                glm::vec2 lo{std::numeric_limits<float>::max()};
+                glm::vec2 hi{std::numeric_limits<float>::lowest()};
+                for (const glm::vec2& corner : corners) {
+                    const glm::vec4 clipPos = viewProj * glm::vec4(corner, 0.0f, 1.0f);
+                    const float invW = clipPos.w != 0.0f ? 1.0f / clipPos.w : 0.0f;
+                    const glm::vec2 ndc{clipPos.x * invW, clipPos.y * invW};
+                    const glm::vec2 fb{(ndc.x * 0.5f + 0.5f) * targetSize.x,
+                            (ndc.y * 0.5f + 0.5f) * targetSize.y};
+                    lo = glm::min(lo, fb);
+                    hi = glm::max(hi, fb);
+                }
+                const float x0 = glm::clamp(lo.x, 0.0f, targetSize.x);
+                const float y0 = glm::clamp(lo.y, 0.0f, targetSize.y);
+                const float x1 = glm::clamp(hi.x, 0.0f, targetSize.x);
+                const float y1 = glm::clamp(hi.y, 0.0f, targetSize.y);
+                x = static_cast<int32_t>(std::floor(x0));
+                y = static_cast<int32_t>(std::floor(y0));
+                width = static_cast<uint32_t>(std::max(0.0f, std::ceil(x1) - static_cast<float>(x)));
+                height = static_cast<uint32_t>(
+                        std::max(0.0f, std::ceil(y1) - static_cast<float>(y)));
+            };
+
+            bool scissorSet = false;
+            bool scissorHasClip = false;
+            Rect scissorClip{};
+            float scissorRadius = 0.0f;
+            const auto ensureScissor = [&](bool hasClip, const Rect& clip, float radius) {
+                if (scissorSet && scissorHasClip == hasClip
+                        && (!hasClip
+                                || (SameRect(scissorClip, clip)
+                                        && scissorRadius == radius))) {
+                    return;
+                }
+                int32_t x = 0;
+                int32_t y = 0;
+                uint32_t width = mFrame.mWidth;
+                uint32_t height = mFrame.mHeight;
+                if (hasClip) {
+                    clipToScissor(clip, radius, x, y, width, height);
+                }
+                context.SetScissor(x, y, width, height);
+                scissorSet = true;
+                scissorHasClip = hasClip;
+                scissorClip = clip;
+                scissorRadius = radius;
+            };
+
             for (const UiCmd& command : mCommands) {
                 if (command.mType == UiCmdType::kRects) {
                     const UiRectBatch& batch = mBatches[command.mIndex];
@@ -183,6 +296,7 @@ namespace moe::ui {
                     if (texture == nullptr) {
                         continue;
                     }
+                    ensureScissor(batch.mHasClip, batch.mClip, batch.mClipRadius);
                     context.ClearTextureBindings();
                     context.BindImage(0, texture->mImage);
                     context.BindSampler(1, texture->mSampler);
@@ -200,6 +314,7 @@ namespace moe::ui {
                 }
 
                 const UiTextCmd& text = mTexts[command.mIndex];
+                ensureScissor(text.mHasClip, text.mClip, text.mClipRadius);
                 neo::TextDrawParams params;
                 params.mPixelSize = text.mFontSize;
                 params.mColor = text.mColor;

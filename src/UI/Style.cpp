@@ -12,6 +12,7 @@ namespace moe::ui {
         out.mGap = style.mGap.value_or(theme.mGap);
         out.mFontSize = style.mFontSize.value_or(theme.mFontSize);
         out.mFont = style.mFont.value_or(theme.mFont);
+        out.mTextLayout = style.mTextLayout.value_or(TextLayout::kSingleLine);
         return out;
     }
 }// namespace moe::ui

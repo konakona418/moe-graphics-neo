@@ -128,6 +128,12 @@ namespace moe::neo {
     class PassContext {
     public:
         void SetState(const DrawState& state);
+        // Sets the scissor rectangle in framebuffer pixels (origin top-left, y
+        // down) for subsequent draws. Dynamic state: cheap, no pipeline rebuild,
+        // sticky across draws until changed. Every pass starts with the full
+        // attachment (BeginPass calls SetViewport). A zero-size rectangle clips
+        // everything.
+        void SetScissor(int32_t x, int32_t y, uint32_t width, uint32_t height);
         void SetPushConstant(int32_t index, const void* data, size_t size);
         void BindImage(uint32_t binding, const rhi::Image& image);
         void BindSampler(uint32_t binding, const rhi::Sampler& sampler);
@@ -291,6 +297,7 @@ namespace moe::neo {
     private:
         friend class PassContext;
         void SetStateInternal(const DrawState& state);
+        void SetScissorInternal(int32_t x, int32_t y, uint32_t width, uint32_t height);
         void SetCameraInternal(const Camera& camera);
         const Camera* GetCameraInternal() const;
         void ClearTextureBindingsInternal();

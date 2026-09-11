@@ -145,6 +145,7 @@ namespace moe::neo {
         std::vector<uint8_t> mDynamicVertexCpu;
         rhi::Buffer mDynamicVertexBuffer;
         uint32_t mDynamicVertexCapacity{0};
+        uint32_t mDynamicVertexLastFrameBytes{0};
         bool mDynamicVertexUsed{false};
         Uploader mUploader;
 
@@ -555,6 +556,25 @@ namespace moe::neo {
         mImpl->mCurrentTarget = nullptr;
         mImpl->mDepthTargetPtr = nullptr;
         mImpl->mCurrentPipelineHash = 0;
+        // Grow the dynamic vertex arena to fit last frame's usage now, before
+        // any draw references it: mid-frame growth is impossible because
+        // recorded draws point into the buffer (see AppendDynamicVertices).
+        if (!mImpl->mDynamicVertexCpu.empty()) {
+            mImpl->mDynamicVertexLastFrameBytes =
+                    static_cast<uint32_t>(mImpl->mDynamicVertexCpu.size());
+        }
+        const uint32_t wantedBytes =
+                std::max(mImpl->mDynamicVertexLastFrameBytes * 2u,
+                        std::max(mImpl->mDynamicVertexCapacity, 1024u * 1024u));
+        if (wantedBytes > mImpl->mDynamicVertexCapacity) {
+            rhi::BufferCreateInfo info{};
+            info.mSize = wantedBytes;
+            info.mUsage = rhi::BufferUsage::kVertex | rhi::BufferUsage::kTransferDst;
+            mImpl->mDynamicVertexBuffer.Destroy();
+            if (mImpl->mDevice->CreateBuffer(info, mImpl->mDynamicVertexBuffer)) {
+                mImpl->mDynamicVertexCapacity = wantedBytes;
+            }
+        }
         mImpl->mDynamicVertexCpu.clear();
         mImpl->mDynamicVertexUsed = false;
     }
@@ -607,6 +627,12 @@ namespace moe::neo {
 
     void Renderer::SetStateInternal(const DrawState& state) {
         mImpl->mState = state;
+    }
+
+    void Renderer::SetScissorInternal(int32_t x, int32_t y, uint32_t width, uint32_t height) {
+        if (mImpl->mCmd != nullptr) {
+            mImpl->mCmd->SetScissor(x, y, width, height);
+        }
     }
 
     void Renderer::SetCameraInternal(const Camera& camera) {
@@ -1050,10 +1076,13 @@ namespace moe::neo {
             // pointing at the old buffer; only grow while nothing has drawn.
             if (impl.mDynamicVertexUsed) {
                 moe::Error::Set("Renderer: dynamic vertex arena overflow (draw already recorded)");
+                moe::Logger::Warn("Renderer: dynamic vertex arena overflow ({} bytes needed, {} "
+                                  "capacity, draw already recorded)",
+                        needed, impl.mDynamicVertexCapacity);
                 return UINT32_MAX;
             }
             const uint32_t capacity = std::max(needed, std::max(impl.mDynamicVertexCapacity * 2,
-                    256u * 1024u));
+                    1024u * 1024u));
             rhi::BufferCreateInfo info{};
             info.mSize = capacity;
             info.mUsage = rhi::BufferUsage::kVertex | rhi::BufferUsage::kTransferDst;
@@ -1085,6 +1114,10 @@ namespace moe::neo {
 
     void PassContext::SetState(const DrawState& state) {
         mRenderer->SetStateInternal(state);
+    }
+
+    void PassContext::SetScissor(int32_t x, int32_t y, uint32_t width, uint32_t height) {
+        mRenderer->SetScissorInternal(x, y, width, height);
     }
 
     void PassContext::SetCamera(const Camera& camera) {
