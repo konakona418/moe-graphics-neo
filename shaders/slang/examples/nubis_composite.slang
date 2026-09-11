@@ -46,7 +46,8 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
     float2 uv = input.mUv;
     float3 scene = sceneTex.SampleLevel(linearSampler, uv, 0.0).rgb;
 
-    if (pcs.mGodrayEnabled > 0.5 && pcs.mSunElevation > 0.0) {
+    float godrayAmount = saturate(pcs.mGodrayEnabled);
+    if (godrayAmount > 0.0 && pcs.mSunElevation > 0.0) {
         const int kSamples = 100;
         const float kDecay = 0.96;
         const float kDensity = 0.2;
@@ -65,7 +66,7 @@ float4 fragmentMain(VertexOutput input) : SV_Target {
             ray += samp * (illumination * kWeight);
             illumination *= kDecay;
         }
-        scene += ray * exposure;
+        scene += ray * (exposure * godrayAmount);
     }
 
     float3 col = Tonemap(scene, pcs.mExposure, 1.0 / 2.2, pcs.mWhitePoint);

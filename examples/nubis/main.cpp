@@ -509,7 +509,12 @@ namespace {
 
         moe::neo::RenderTarget* hdr = data->mRenderer.GetRenderTarget(data->mHdrTarget);
         const float sunElevation = data->mCloudPc.mSunDir.y;
-        const float godrayEnabled = data->mGodrayEnabled ? 1.0f : 0.0f;
+        // screen-space god rays are only meaningful looking toward the sun; fade
+        // out as it crosses behind the camera so the ray direction cannot flip
+        const float rawSunForward = glm::dot(data->mCloudPc.mSunDir, forward);
+        const float godrayEnabled = data->mGodrayEnabled
+                ? glm::smoothstep(0.0f, 0.15f, rawSunForward)
+                : 0.0f;
         const float godrayExposure = data->mGodrayExposure;
         const float exposure = data->mExposure;
         const float whitePoint = data->mWhitePoint;
