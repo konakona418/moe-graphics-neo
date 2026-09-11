@@ -218,3 +218,13 @@ target_compile_definitions(moe-neo-font-smoke PRIVATE
 )
 
 add_test(NAME neo-font-smoke COMMAND moe-neo-font-smoke)
+
+add_executable(moe-ui-smoke
+  UiSmoke.cpp
+)
+
+target_link_libraries(moe-ui-smoke PRIVATE
+  moe-ui
+)
+
+add_test(NAME ui-smoke COMMAND moe-ui-smoke)

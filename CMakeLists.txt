@@ -71,6 +71,9 @@ add_subdirectory(src/Neo)
 # ImGui debug overlay (migrated from the old engine)
 add_subdirectory(src/DebugUI)
 
+# declarative UI system (value-tree views over the neo renderer)
+add_subdirectory(src/UI)
+
 include(CTest)
 enable_testing()
 

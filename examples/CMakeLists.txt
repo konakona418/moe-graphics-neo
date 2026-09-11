@@ -171,3 +171,20 @@ target_compile_definitions(moe-example-nubis PRIVATE
 if(TARGET moe-shaders)
     add_dependencies(moe-example-nubis moe-shaders)
 endif()
+
+add_executable(moe-example-ui
+  ui/main.cpp
+)
+
+target_link_libraries(moe-example-ui PRIVATE
+  moe-example-common
+  moe-ui
+)
+
+target_compile_definitions(moe-example-ui PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-ui moe-shaders)
+endif()
