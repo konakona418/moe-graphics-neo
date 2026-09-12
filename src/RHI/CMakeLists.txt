@@ -4,6 +4,7 @@ add_library(moe-rhi STATIC
   Vulkan/CommandList.cpp
   Vulkan/DescriptorSet.cpp
   Vulkan/Device.cpp
+  Vulkan/Fence.cpp
   Vulkan/Image.cpp
   Vulkan/Pipeline.cpp
   Vulkan/PipelineCache.cpp
@@ -12,6 +13,7 @@ add_library(moe-rhi STATIC
   Vulkan/Sampler.cpp
   Vulkan/Shader.cpp
   Vulkan/Swapchain.cpp
+  Vulkan/TimelineSemaphore.cpp
   Vulkan/VmaImpl.cpp
 )
 

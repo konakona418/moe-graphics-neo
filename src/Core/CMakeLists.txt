@@ -2,6 +2,7 @@ add_library(moe-core STATIC
   Error.cpp
   FileIo.cpp
   Logger.cpp
+  Scheduler.cpp
 )
 
 target_include_directories(moe-core PUBLIC
@@ -17,4 +18,5 @@ target_link_libraries(moe-core PUBLIC
   spdlog::spdlog
   fmt::fmt
   moe::tracy
+  Threads::Threads
 )

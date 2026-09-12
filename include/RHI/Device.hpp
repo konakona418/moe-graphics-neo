@@ -16,6 +16,8 @@ namespace moe::rhi {
     class DescriptorSet;
     class GraphicsPipeline;
     class ComputePipeline;
+    class TimelineSemaphore;
+    class Fence;
     struct GraphicsPipelineState;
     struct ComputePipelineState;
     struct DeviceImpl;
@@ -66,6 +68,10 @@ namespace moe::rhi {
         bool CreateBuffer(const BufferCreateInfo& info, Buffer& outBuffer);
         bool CreateImage(const ImageCreateInfo& info, Image& outImage);
         bool CreateSampler(const SamplerCreateInfo& info, Sampler& outSampler);
+        // Creates a timeline semaphore with the given initial counter value.
+        bool CreateTimelineSemaphore(TimelineSemaphore& outSemaphore, uint64_t initialValue = 0);
+        // Creates a binary fence, unsignaled unless `signaled` is true.
+        bool CreateFence(Fence& outFence, bool signaled = false);
         bool CreateCommandList(CommandList& outCommandList);
         // Creates a present-capable swapchain from an opaque VkSurfaceKHR handle
         // (created by the caller, e.g. neo::Window). The graphics queue is used
@@ -86,6 +92,12 @@ namespace moe::rhi {
         // Submits the recorded command list to the graphics queue. When
         // waitForCompletion is true, blocks until the GPU finishes.
         bool Submit(const CommandList& commandList, bool waitForCompletion);
+
+        // Submits with timeline-semaphore waits/signals. The optional fence is
+        // signaled when the submission completes (pass nullptr to skip).
+        // Never blocks.
+        bool Submit(const CommandList& commandList, const SubmitInfo& submitInfo,
+                Fence* fence = nullptr);
 
         bool WaitIdle();
 

@@ -61,6 +61,17 @@ namespace examples {
         }
         moe::Defer commandListCleanup([&] { mCommandList.Destroy(); });
 
+        // Async infrastructure: the CPU pool and the GPU transfer context.
+        // Registered after deviceCleanup so both are torn down before it.
+        moe::Defer schedulerCleanup([&] { mScheduler.Shutdown(); });
+        moe::Defer transferCleanup([&] { mTransfer.Shutdown(); });
+        if (!mScheduler.Init()) {
+            return false;
+        }
+        if (!mTransfer.Init(mDevice)) {
+            return false;
+        }
+
         // assets must be destroyed before the device (RHI leak traps)
         moe::Defer assetsCleanup([&] { mAssets.Destroy(); });
         if (!mAssets.Init(mDevice)) {
@@ -92,7 +103,7 @@ namespace examples {
         }
 
         AppContext ctx{mDevice, mPipelineCache, mWindow, mSwapchain, mIm3d, mInput, mAssets,
-                sampleCount};
+                mScheduler, mTransfer, sampleCount};
         if (callbacks.mSetup != nullptr && !callbacks.mSetup(callbacks.mUserdata, ctx)) {
             return moe::Fail("Setup failed");
         }
@@ -149,6 +160,11 @@ namespace examples {
                 failed = true;
                 break;
             }
+            // Submit any readback copies queued this frame (after Present so
+            // they execute after the frame's GPU work), then drain main-thread
+            // completions posted by the transfer context's completion thread.
+            mTransfer.Pump();
+            mScheduler.Pump();
             mInput.EndFrame(); // clear per-frame edges + mouse deltas
             MOE_PROFILE_FRAME();
         }

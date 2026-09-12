@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace moe::rhi {
+    class TimelineSemaphore;
     enum class BufferUsage : uint32_t {
         kUniform = 1 << 0,
         kStorage = 1 << 1,
@@ -228,6 +230,29 @@ namespace moe::rhi {
         Access mSrcAccess{Access::kNone};
         PipelineStage mDstStage{PipelineStage::kTopOfPipe};
         Access mDstAccess{Access::kNone};
+    };
+
+    // One wait on a timeline semaphore value, performed by a queue submission
+    // before any of its commands run. mStage is the pipeline stage that blocks
+    // (e.g. kTransfer for a copy, kComputeShader for a dispatch).
+    struct TimelineWait {
+        const TimelineSemaphore* mSemaphore{nullptr};
+        uint64_t mValue{0};
+        PipelineStage mStage{PipelineStage::kTopOfPipe};
+    };
+
+    // One signal of a timeline semaphore value, performed once the submission's
+    // commands complete.
+    struct TimelineSignal {
+        const TimelineSemaphore* mSemaphore{nullptr};
+        uint64_t mValue{0};
+    };
+
+    // Timeline-semaphore waits/signals for one queue submission. Empty spans
+    // mean no wait/signal (equivalent to a plain submit).
+    struct SubmitInfo {
+        std::span<const TimelineWait> mWaits;
+        std::span<const TimelineSignal> mSignals;
     };
 
     struct BufferCreateInfo {

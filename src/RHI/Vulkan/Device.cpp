@@ -3,11 +3,13 @@
 #include "RHI/Buffer.hpp"
 #include "RHI/CommandList.hpp"
 #include "RHI/DescriptorSet.hpp"
+#include "RHI/Fence.hpp"
 #include "RHI/Image.hpp"
 #include "RHI/Pipeline.hpp"
 #include "RHI/PipelineCache.hpp"
 #include "RHI/Sampler.hpp"
 #include "RHI/Swapchain.hpp"
+#include "RHI/TimelineSemaphore.hpp"
 #include "Core/Defer.hpp"
 #include "Core/Error.hpp"
 #include "Core/Logger.hpp"
@@ -126,6 +128,7 @@ namespace moe::rhi {
         VkPhysicalDeviceVulkan12Features features12 = {
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
                 .scalarBlockLayout = VK_TRUE,
+                .timelineSemaphore = VK_TRUE,
                 .bufferDeviceAddress = VK_TRUE,
         };
         if (info.mEnableDescriptorIndexing) {
@@ -350,6 +353,44 @@ namespace moe::rhi {
         if (vkCreateSampler(mImpl->mDevice, &samplerInfo, nullptr, &impl->mSampler) != VK_SUCCESS) {
             outSampler.mImpl.reset();
             return Fail("Failed to create sampler");
+        }
+        return true;
+    }
+
+    bool Device::CreateTimelineSemaphore(TimelineSemaphore& outSemaphore, uint64_t initialValue) {
+        MOE_PROFILE_ZONE();
+        outSemaphore.mImpl = std::make_unique<TimelineSemaphoreImpl>();
+        auto* impl = outSemaphore.mImpl.get();
+        impl->mDevice = mImpl.get();
+
+        VkSemaphoreTypeCreateInfo typeInfo{};
+        typeInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+        typeInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        typeInfo.initialValue = initialValue;
+
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        semaphoreInfo.pNext = &typeInfo;
+        if (vkCreateSemaphore(mImpl->mDevice, &semaphoreInfo, nullptr, &impl->mSemaphore)
+                != VK_SUCCESS) {
+            outSemaphore.mImpl.reset();
+            return Fail("Failed to create timeline semaphore");
+        }
+        return true;
+    }
+
+    bool Device::CreateFence(Fence& outFence, bool signaled) {
+        MOE_PROFILE_ZONE();
+        outFence.mImpl = std::make_unique<FenceImpl>();
+        auto* impl = outFence.mImpl.get();
+        impl->mDevice = mImpl.get();
+
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = signaled ? VK_FENCE_CREATE_SIGNALED_BIT : 0;
+        if (vkCreateFence(mImpl->mDevice, &fenceInfo, nullptr, &impl->mFence) != VK_SUCCESS) {
+            outFence.mImpl.reset();
+            return Fail("Failed to create fence");
         }
         return true;
     }
@@ -600,6 +641,52 @@ namespace moe::rhi {
             }
             vkDestroyFence(mImpl->mDevice, fence, nullptr);
         } else if (vkQueueSubmit(mImpl->mGraphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+            return Fail("Failed to submit command buffer");
+        }
+        return true;
+    }
+
+    bool Device::Submit(const CommandList& commandList, const SubmitInfo& submitInfo, Fence* fence) {
+        MOE_PROFILE_ZONE();
+        std::vector<VkSemaphoreSubmitInfo> waits;
+        waits.reserve(submitInfo.mWaits.size());
+        for (const auto& wait : submitInfo.mWaits) {
+            VkSemaphoreSubmitInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+            info.semaphore = wait.mSemaphore->mImpl->mSemaphore;
+            info.value = wait.mValue;
+            info.stageMask = ToVkPipelineStage(wait.mStage);
+            waits.push_back(info);
+        }
+        std::vector<VkSemaphoreSubmitInfo> signals;
+        signals.reserve(submitInfo.mSignals.size());
+        for (const auto& signal : submitInfo.mSignals) {
+            VkSemaphoreSubmitInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+            info.semaphore = signal.mSemaphore->mImpl->mSemaphore;
+            info.value = signal.mValue;
+            // Signal once every command in the submission has completed.
+            info.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            signals.push_back(info);
+        }
+
+        VkCommandBufferSubmitInfo commandInfo{};
+        commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        commandInfo.commandBuffer = commandList.mImpl->mCommandBuffer;
+
+        VkSubmitInfo2 info{};
+        info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        info.waitSemaphoreInfoCount = static_cast<uint32_t>(waits.size());
+        info.pWaitSemaphoreInfos = waits.data();
+        info.commandBufferInfoCount = 1;
+        info.pCommandBufferInfos = &commandInfo;
+        info.signalSemaphoreInfoCount = static_cast<uint32_t>(signals.size());
+        info.pSignalSemaphoreInfos = signals.data();
+
+        const VkFence vkFence = fence != nullptr && fence->mImpl != nullptr
+                ? fence->mImpl->mFence
+                : VK_NULL_HANDLE;
+        if (vkQueueSubmit2(mImpl->mGraphicsQueue, 1, &info, vkFence) != VK_SUCCESS) {
             return Fail("Failed to submit command buffer");
         }
         return true;

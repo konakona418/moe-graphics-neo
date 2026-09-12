@@ -73,6 +73,16 @@ namespace moe::rhi {
         DeviceImpl* mDevice{nullptr};
     };
 
+    struct TimelineSemaphoreImpl {
+        VkSemaphore mSemaphore{VK_NULL_HANDLE};
+        DeviceImpl* mDevice{nullptr};
+    };
+
+    struct FenceImpl {
+        VkFence mFence{VK_NULL_HANDLE};
+        DeviceImpl* mDevice{nullptr};
+    };
+
     struct DescriptorSetImpl {
         VkDescriptorSet mSet{VK_NULL_HANDLE};
         VkDescriptorPool mPool{VK_NULL_HANDLE};
@@ -92,6 +102,8 @@ namespace moe::rhi {
         VkImage mImage{VK_NULL_HANDLE};
         VkImageView mImageView{VK_NULL_HANDLE};
         VkSampler mSampler{VK_NULL_HANDLE};
+        VkSemaphore mSemaphore{VK_NULL_HANDLE};
+        VkFence mFence{VK_NULL_HANDLE};
     };
 
     // A cached pipeline node owned by the PipelineCache. GraphicsPipeline /
@@ -154,6 +166,12 @@ namespace moe::rhi {
                 }
                 if (d.mSampler != VK_NULL_HANDLE) {
                     vkDestroySampler(mDevice, d.mSampler, nullptr);
+                }
+                if (d.mSemaphore != VK_NULL_HANDLE) {
+                    vkDestroySemaphore(mDevice, d.mSemaphore, nullptr);
+                }
+                if (d.mFence != VK_NULL_HANDLE) {
+                    vkDestroyFence(mDevice, d.mFence, nullptr);
                 }
             }
             mDeferredDeletions.clear();

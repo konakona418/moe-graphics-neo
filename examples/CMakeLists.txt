@@ -261,3 +261,18 @@ target_compile_definitions(moe-example-fluid3d PRIVATE
 if(TARGET moe-shaders)
     add_dependencies(moe-example-fluid3d moe-shaders)
 endif()
+add_executable(moe-example-async-readback
+  async_readback/main.cpp
+)
+
+target_link_libraries(moe-example-async-readback PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-async-readback PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-async-readback moe-shaders)
+endif()

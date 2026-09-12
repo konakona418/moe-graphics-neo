@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # vendored code); this project does not use modules.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
+# moe-core's Scheduler uses std::thread/std::condition_variable.
+find_package(Threads REQUIRED)
+
 add_subdirectory(vendors/glfw)
 add_subdirectory(vendors/glm)
 add_subdirectory(vendors/Vulkan-Headers)

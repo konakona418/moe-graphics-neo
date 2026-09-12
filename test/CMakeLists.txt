@@ -228,3 +228,31 @@ target_link_libraries(moe-ui-smoke PRIVATE
 )
 
 add_test(NAME ui-smoke COMMAND moe-ui-smoke)
+
+add_executable(moe-scheduler-tests
+  SchedulerTests.cpp
+)
+
+target_link_libraries(moe-scheduler-tests PRIVATE
+  moe-core
+)
+
+add_test(NAME scheduler-tests COMMAND moe-scheduler-tests)
+
+add_executable(moe-neo-async-readback-smoke
+  AsyncReadbackSmoke.cpp
+)
+
+target_link_libraries(moe-neo-async-readback-smoke PRIVATE
+  moe-neo
+)
+
+target_compile_definitions(moe-neo-async-readback-smoke PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-neo-async-readback-smoke moe-shaders)
+endif()
+
+add_test(NAME async-readback-smoke COMMAND moe-neo-async-readback-smoke)

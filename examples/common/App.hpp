@@ -2,6 +2,7 @@
 
 #include <Neo/Assets.hpp>
 #include <Neo/Input.hpp>
+#include <Neo/TransferContext.hpp>
 #include <Neo/Window.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/Device.hpp>
@@ -9,6 +10,8 @@
 #include <RHI/Swapchain.hpp>
 #include <UI/DebugUI.hpp>
 #include <UI/Im3dDrawer.hpp>
+
+#include <Core/Scheduler.hpp>
 
 #include <chrono>
 #include <string>
@@ -22,6 +25,11 @@ namespace examples {
         moe::ui::Im3dDrawer& mIm3d;
         moe::neo::Input& mInput;
         moe::neo::Assets& mAssets;
+        // Async infrastructure shared by demos: a CPU worker pool and the GPU
+        // transfer context backing AsyncReadback. Both are pumped once per
+        // frame by the App loop.
+        moe::Scheduler& mScheduler;
+        moe::neo::TransferContext& mTransfer;
         // Effective MSAA level (clamped to device support); pass it to
         // neo::Renderer::Init so the renderer and swapchain agree.
         uint32_t mSampleCount{1};
@@ -75,6 +83,9 @@ namespace examples {
         moe::rhi::CommandList mCommandList;
         moe::neo::Input mInput;
         moe::neo::Assets mAssets;
+        // Declared after mDevice so they are torn down before it.
+        moe::Scheduler mScheduler;
+        moe::neo::TransferContext mTransfer;
         moe::ui::DebugUI mDebugUI;
         moe::ui::Im3dDrawer mIm3d;
         bool mUiActive{false};
