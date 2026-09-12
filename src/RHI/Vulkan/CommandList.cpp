@@ -170,9 +170,13 @@ namespace moe::rhi {
         renderingInfo.colorAttachmentCount = 1;
         renderingInfo.pColorAttachments = &colorAttachment;
         renderingInfo.pDepthAttachment = depth != nullptr ? &depthAttachment : nullptr;
-        // The stencil attachment is a separate slot; without it the stencil
-        // test is a no-op even when the depth attachment has a stencil aspect.
-        renderingInfo.pStencilAttachment = depth != nullptr ? &depthAttachment : nullptr;
+        // The stencil attachment is a separate slot, but it must only be bound
+        // when the depth format actually has a stencil aspect: the pipeline's
+        // stencilAttachmentFormat is UNDEFINED for a depth-only format, and the
+        // two disagreeing is a validation error.
+        renderingInfo.pStencilAttachment =
+                (depth != nullptr && FormatHasStencil(depth->GetFormat())) ? &depthAttachment
+                                                                          : nullptr;
         vkCmdBeginRendering(mImpl->mCommandBuffer, &renderingInfo);
     }
 
