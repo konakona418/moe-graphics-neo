@@ -4,6 +4,8 @@
 #include <UI/Types.hpp>
 
 #include <Neo/Assets.hpp>
+#include <RHI/Image.hpp>
+#include <RHI/Sampler.hpp>
 
 #include <functional>
 #include <string>
@@ -25,6 +27,10 @@ namespace moe::ui {
 
     struct ImageData {
         neo::TextureHandle mTexture;
+        // Direct (non-owned) image + sampler, for showing a render target that
+        // is not in the Assets texture cache. When set, mTexture is ignored.
+        const rhi::Image* mRawImage{nullptr};
+        const rhi::Sampler* mRawSampler{nullptr};
         glm::vec4 mTint{1.0f};
         Style mStyle;
     };
@@ -183,6 +189,16 @@ namespace moe::ui {
     inline Element Image(neo::TextureHandle texture, Style style = {}) {
         ImageData data;
         data.mTexture = texture;
+        data.mStyle = detail::NoPadding(style);
+        return data;
+    }
+
+    // Shows an image owned elsewhere (e.g. a render target). The image and
+    // sampler must outlive the frame the element is drawn in.
+    inline Element Image(const rhi::Image& image, const rhi::Sampler& sampler, Style style = {}) {
+        ImageData data;
+        data.mRawImage = &image;
+        data.mRawSampler = &sampler;
         data.mStyle = detail::NoPadding(style);
         return data;
     }

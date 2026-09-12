@@ -253,7 +253,11 @@ namespace moe::ui {
                     if constexpr (std::is_same_v<T, LabelData>) {
                         intrinsic = MeasureTextElement(element, style, body.mText, available);
                     } else if constexpr (std::is_same_v<T, ImageData>) {
-                        if (neo::UploadedTexture* texture = mAssets->GetTexture(body.mTexture)) {
+                        if (body.mRawImage != nullptr) {
+                            intrinsic = {static_cast<float>(body.mRawImage->GetWidth()),
+                                    static_cast<float>(body.mRawImage->GetHeight())};
+                        } else if (neo::UploadedTexture* texture =
+                                           mAssets->GetTexture(body.mTexture)) {
                             intrinsic = {static_cast<float>(texture->mImage.GetWidth()),
                                     static_cast<float>(texture->mImage.GetHeight())};
                         }
@@ -439,13 +443,22 @@ namespace moe::ui {
             return;
         }
 
+        // A Spacer carries its size request in SpacerData (the Element's own
+        // width/height stay Fit), so main-axis Grow must read it from there.
+        const auto mainSizeOf = [](const Element& element, bool horizontal) -> Size {
+            if (const SpacerData* spacer = std::get_if<SpacerData>(&element.mBody)) {
+                return spacer->mSize;
+            }
+            return horizontal ? element.mWidth : element.mHeight;
+        };
+
         std::vector<glm::vec2> sizes(count);
         float totalMain = 0.0f;
         float totalWeight = 0.0f;
         for (uint32_t i = 0; i < count; ++i) {
             const Element& child = *mNodes[node.mChildren[i]].mElement;
             sizes[i] = Measure(child, mNodes[node.mChildren[i]].mStyle, content.Size());
-            const Size& mainSize = horizontal ? child.mWidth : child.mHeight;
+            const Size mainSize = mainSizeOf(child, horizontal);
             if (mainSize.mKind == Size::Kind::kGrow) {
                 totalWeight += std::max(mainSize.mValue, 0.0f);
             } else {
@@ -473,7 +486,7 @@ namespace moe::ui {
         float cursor = (horizontal ? content.mMin.x : content.mMin.y) + offset;
         for (uint32_t i = 0; i < count; ++i) {
             const Element& child = *mNodes[node.mChildren[i]].mElement;
-            const Size& mainSize = horizontal ? child.mWidth : child.mHeight;
+            const Size mainSize = mainSizeOf(child, horizontal);
             float main = horizontal ? sizes[i].x : sizes[i].y;
             if (mainSize.mKind == Size::Kind::kGrow && totalWeight > 0.0f) {
                 main = leftover * (mainSize.mValue / totalWeight);

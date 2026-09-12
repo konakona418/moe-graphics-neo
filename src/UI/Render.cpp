@@ -49,7 +49,7 @@ namespace moe::ui {
                         PushText(node.mRect, style, body.mText, body.mAlign, element.mZ);
                     } else if constexpr (std::is_same_v<T, ImageData>) {
                         PushRect(node.mRect, body.mTint, 0.0f, 0.0f, 0, element.mZ,
-                                body.mTexture);
+                                body.mTexture, body.mRawImage, body.mRawSampler);
                     } else if constexpr (std::is_same_v<T, ButtonData>) {
                         glm::vec4 background = mTheme.mButtonColor;
                         if (node.mHovered) {
@@ -143,7 +143,8 @@ namespace moe::ui {
     }
 
     void Ui::Impl::PushRect(const Rect& rect, const glm::vec4& color, float radius,
-            float borderWidth, int mode, float z, neo::TextureHandle texture) {
+            float borderWidth, int mode, float z, neo::TextureHandle texture,
+            const rhi::Image* rawImage, const rhi::Sampler* rawSampler) {
         if (rect.Width() <= 0.0f || rect.Height() <= 0.0f) {
             return;
         }
@@ -161,13 +162,21 @@ namespace moe::ui {
         }
         if (!mCommands.empty() && mCommands.back().mType == UiCmdType::kRects) {
             UiRectBatch& last = mBatches[mCommands.back().mIndex];
-            if (last.mFirstVertex + last.mVertexCount == first
-                    && SameTexture(last.mTexture, texture)) {
+            const bool sameSource = last.mRawImage == rawImage
+                    && last.mRawSampler == rawSampler
+                    && (rawImage != nullptr || SameTexture(last.mTexture, texture));
+            if (last.mFirstVertex + last.mVertexCount == first && sameSource) {
                 last.mVertexCount += 6;
                 return;
             }
         }
-        mBatches.push_back({texture, first, 6});
+        UiRectBatch batch;
+        batch.mTexture = texture;
+        batch.mRawImage = rawImage;
+        batch.mRawSampler = rawSampler;
+        batch.mFirstVertex = first;
+        batch.mVertexCount = 6;
+        mBatches.push_back(batch);
         mCommands.push_back({UiCmdType::kRects, static_cast<uint32_t>(mBatches.size() - 1)});
     }
 
@@ -315,9 +324,15 @@ namespace moe::ui {
 
                 if (command.mType == UiCmdType::kRects) {
                     const UiRectBatch& batch = mBatches[command.mIndex];
-                    neo::UploadedTexture* texture = mAssets->GetTexture(batch.mTexture);
-                    if (texture == nullptr) {
-                        continue;
+                    const rhi::Image* image = batch.mRawImage;
+                    const rhi::Sampler* sampler = batch.mRawSampler;
+                    if (image == nullptr) {
+                        neo::UploadedTexture* texture = mAssets->GetTexture(batch.mTexture);
+                        if (texture == nullptr) {
+                            continue;
+                        }
+                        image = &texture->mImage;
+                        sampler = &texture->mSampler;
                     }
                     if (clipDepth > 0) {
                         setMode(1, clippedState);
@@ -326,8 +341,8 @@ namespace moe::ui {
                         setMode(0, contentState);
                     }
                     context.ClearTextureBindings();
-                    context.BindImage(0, texture->mImage);
-                    context.BindSampler(1, texture->mSampler);
+                    context.BindImage(0, *image);
+                    context.BindSampler(1, *sampler);
                     if (pcViewProj >= 0) {
                         context.SetPushConstant(pcViewProj, &viewProj, sizeof(viewProj));
                     }

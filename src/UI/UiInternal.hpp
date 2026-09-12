@@ -46,6 +46,8 @@ namespace moe::ui {
 
     struct UiRectBatch {
         neo::TextureHandle mTexture;
+        const rhi::Image* mRawImage{nullptr};
+        const rhi::Sampler* mRawSampler{nullptr};
         uint32_t mFirstVertex{0};
         uint32_t mVertexCount{0};
     };
@@ -153,7 +155,8 @@ namespace moe::ui {
         void BuildNode(uint32_t index);
         uint32_t PushClipShape(const UiNode& node);
         void PushRect(const Rect& rect, const glm::vec4& color, float radius, float borderWidth,
-                int mode, float z, neo::TextureHandle texture);
+                int mode, float z, neo::TextureHandle texture,
+                const rhi::Image* rawImage = nullptr, const rhi::Sampler* rawSampler = nullptr);
         void PushText(const Rect& box, const ResolvedStyle& style, std::string_view text,
                 Alignment align, float z);
         void Record(neo::Renderer& renderer);
