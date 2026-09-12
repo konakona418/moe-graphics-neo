@@ -164,9 +164,9 @@ int main() {
         return moe::test::Fail(kTestName);
     }
 
-    if (!noiseComp.Load(MOE_SOURCE_DIR "/shaders/examples/clouds_noise.comp.spv", moe::rhi::ShaderStage::kCompute)
-            || !vert.Load(MOE_SOURCE_DIR "/shaders/examples/clouds.vert.spv", moe::rhi::ShaderStage::kVertex)
-            || !frag.Load(MOE_SOURCE_DIR "/shaders/examples/clouds.frag.spv", moe::rhi::ShaderStage::kFragment)) {
+    if (!noiseComp.Load(MOE_SOURCE_DIR "/shaders/examples/clouds/clouds_noise.comp.spv", moe::rhi::ShaderStage::kCompute)
+            || !vert.Load(MOE_SOURCE_DIR "/shaders/examples/clouds/clouds.vert.spv", moe::rhi::ShaderStage::kVertex)
+            || !frag.Load(MOE_SOURCE_DIR "/shaders/examples/clouds/clouds.frag.spv", moe::rhi::ShaderStage::kFragment)) {
         return moe::test::Fail(kTestName, "shader load failed");
     }
     if (!noiseProgram.AddShader(noiseComp)
