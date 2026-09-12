@@ -7,6 +7,7 @@
 #include "RHI/Image.hpp"
 #include "RHI/Pipeline.hpp"
 #include "RHI/PipelineCache.hpp"
+#include "RHI/Queue.hpp"
 #include "RHI/Sampler.hpp"
 #include "RHI/Swapchain.hpp"
 #include "RHI/TimelineSemaphore.hpp"
@@ -58,7 +59,11 @@ namespace moe::rhi {
                 vmaDestroyAllocator(impl->mAllocator);
             }
             if (impl->mDevice != VK_NULL_HANDLE) {
-                vkDestroyCommandPool(impl->mDevice, impl->mCommandPool, nullptr);
+                for (const VkCommandPool pool : impl->mCommandPools) {
+                    if (pool != VK_NULL_HANDLE) {
+                        vkDestroyCommandPool(impl->mDevice, pool, nullptr);
+                    }
+                }
                 vkDestroyDevice(impl->mDevice, nullptr);
             }
             if (impl->mInstance.instance != VK_NULL_HANDLE) {
@@ -188,10 +193,22 @@ namespace moe::rhi {
         auto queueIndexResult = vkbDevice.get_queue_index(vkb::QueueType::graphics);
         impl->mGraphicsQueueFamily = queueIndexResult.has_value() ? *queueIndexResult : 0;
 
-        VkCommandPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        if (vkCreateCommandPool(impl->mDevice, &poolInfo, nullptr, &impl->mCommandPool) != VK_SUCCESS) {
+        // A compute/transfer queue separate from graphics when the device has
+        // one (vk-bootstrap creates a queue per family); otherwise fall back to
+        // the graphics queue so single-family devices still work.
+        if (auto computeQueue = vkbDevice.get_queue(vkb::QueueType::compute)) {
+            impl->mComputeQueue = *computeQueue;
+        } else {
+            impl->mComputeQueue = impl->mGraphicsQueue;
+        }
+        if (auto computeIndex = vkbDevice.get_queue_index(vkb::QueueType::compute)) {
+            impl->mComputeQueueFamily = *computeIndex;
+        } else {
+            impl->mComputeQueueFamily = impl->mGraphicsQueueFamily;
+        }
+        // Create the graphics pool now (its queueFamilyIndex must be the real
+        // family, never a hardcoded 0).
+        if (impl->GetOrCreateCommandPool(impl->mGraphicsQueueFamily) == VK_NULL_HANDLE) {
             return Fail("Failed to create command pool");
         }
 
@@ -248,6 +265,19 @@ namespace moe::rhi {
         bufferInfo.size = info.mSize;
         bufferInfo.usage = ToVulkanBufferUsage(info.mUsage) | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
+        uint32_t sharingFamilies[2] = {mImpl->mGraphicsQueueFamily, mImpl->mComputeQueueFamily};
+        const uint32_t sharingFamilyCount = info.mSharedAcrossQueues
+                        && mImpl->mComputeQueueFamily != mImpl->mGraphicsQueueFamily
+                ? 2u
+                : 1u;
+        if (sharingFamilyCount > 1) {
+            bufferInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            bufferInfo.queueFamilyIndexCount = sharingFamilyCount;
+            bufferInfo.pQueueFamilyIndices = sharingFamilies;
+        } else {
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
+
         VmaAllocationCreateInfo allocInfo{};
         if (info.mCpuVisible) {
             allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
@@ -298,7 +328,18 @@ namespace moe::rhi {
         imageInfo.samples = ToVkSampleCount(info.mSampleCount);
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.usage = ToVkImageUsage(info.mUsage);
-        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        uint32_t sharingFamilies[2] = {mImpl->mGraphicsQueueFamily, mImpl->mComputeQueueFamily};
+        const uint32_t sharingFamilyCount = info.mSharedAcrossQueues
+                        && mImpl->mComputeQueueFamily != mImpl->mGraphicsQueueFamily
+                ? 2u
+                : 1u;
+        if (sharingFamilyCount > 1) {
+            imageInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            imageInfo.queueFamilyIndexCount = sharingFamilyCount;
+            imageInfo.pQueueFamilyIndices = sharingFamilies;
+        } else {
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.flags = flags;
 
@@ -395,15 +436,24 @@ namespace moe::rhi {
         return true;
     }
 
-    bool Device::CreateCommandList(CommandList& outCommandList) {
+    bool Device::CreateCommandList(QueueType type, CommandList& outCommandList) {
         MOE_PROFILE_ZONE();
+        const uint32_t family = type == QueueType::kGraphics
+                ? mImpl->mGraphicsQueueFamily
+                : mImpl->mComputeQueueFamily;
+        const VkCommandPool pool = mImpl->GetOrCreateCommandPool(family);
+        if (pool == VK_NULL_HANDLE) {
+            return Fail("Failed to create command pool for queue family "
+                    + std::to_string(family));
+        }
         outCommandList.mImpl = std::make_unique<CommandListImpl>();
         auto* impl = outCommandList.mImpl.get();
         impl->mDevice = mImpl.get();
+        impl->mPool = pool;
 
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool = mImpl->mCommandPool;
+        allocInfo.commandPool = pool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = 1;
         if (vkAllocateCommandBuffers(mImpl->mDevice, &allocInfo, &impl->mCommandBuffer) != VK_SUCCESS) {
@@ -411,6 +461,10 @@ namespace moe::rhi {
             return Fail("Failed to allocate command buffer");
         }
         return true;
+    }
+
+    bool Device::CreateCommandList(CommandList& outCommandList) {
+        return CreateCommandList(QueueType::kGraphics, outCommandList);
     }
 
     bool Device::CreateSwapchain(uintptr_t surfaceHandle, uint32_t width, uint32_t height,
@@ -619,28 +673,11 @@ namespace moe::rhi {
 
     bool Device::Submit(const CommandList& commandList, bool waitForCompletion) {
         MOE_PROFILE_ZONE();
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandList.mImpl->mCommandBuffer;
-
-        if (waitForCompletion) {
-            VkFenceCreateInfo fenceInfo{};
-            fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-            VkFence fence;
-            if (vkCreateFence(mImpl->mDevice, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
-                return Fail("Failed to create fence");
-            }
-            if (vkQueueSubmit(mImpl->mGraphicsQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
-                vkDestroyFence(mImpl->mDevice, fence, nullptr);
-                return Fail("Failed to submit command buffer");
-            }
-            if (vkWaitForFences(mImpl->mDevice, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-                vkDestroyFence(mImpl->mDevice, fence, nullptr);
-                return Fail("Failed to wait for fence");
-            }
-            vkDestroyFence(mImpl->mDevice, fence, nullptr);
-        } else if (vkQueueSubmit(mImpl->mGraphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+        Queue queue;
+        if (!GetQueue(QueueType::kGraphics, queue)) {
+            return Fail("Failed to get the graphics queue");
+        }
+        if (!queue.Submit(commandList, waitForCompletion)) {
             return Fail("Failed to submit command buffer");
         }
         return true;
@@ -648,45 +685,11 @@ namespace moe::rhi {
 
     bool Device::Submit(const CommandList& commandList, const SubmitInfo& submitInfo, Fence* fence) {
         MOE_PROFILE_ZONE();
-        std::vector<VkSemaphoreSubmitInfo> waits;
-        waits.reserve(submitInfo.mWaits.size());
-        for (const auto& wait : submitInfo.mWaits) {
-            VkSemaphoreSubmitInfo info{};
-            info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-            info.semaphore = wait.mSemaphore->mImpl->mSemaphore;
-            info.value = wait.mValue;
-            info.stageMask = ToVkPipelineStage(wait.mStage);
-            waits.push_back(info);
+        Queue queue;
+        if (!GetQueue(QueueType::kGraphics, queue)) {
+            return Fail("Failed to get the graphics queue");
         }
-        std::vector<VkSemaphoreSubmitInfo> signals;
-        signals.reserve(submitInfo.mSignals.size());
-        for (const auto& signal : submitInfo.mSignals) {
-            VkSemaphoreSubmitInfo info{};
-            info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-            info.semaphore = signal.mSemaphore->mImpl->mSemaphore;
-            info.value = signal.mValue;
-            // Signal once every command in the submission has completed.
-            info.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-            signals.push_back(info);
-        }
-
-        VkCommandBufferSubmitInfo commandInfo{};
-        commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-        commandInfo.commandBuffer = commandList.mImpl->mCommandBuffer;
-
-        VkSubmitInfo2 info{};
-        info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-        info.waitSemaphoreInfoCount = static_cast<uint32_t>(waits.size());
-        info.pWaitSemaphoreInfos = waits.data();
-        info.commandBufferInfoCount = 1;
-        info.pCommandBufferInfos = &commandInfo;
-        info.signalSemaphoreInfoCount = static_cast<uint32_t>(signals.size());
-        info.pSignalSemaphoreInfos = signals.data();
-
-        const VkFence vkFence = fence != nullptr && fence->mImpl != nullptr
-                ? fence->mImpl->mFence
-                : VK_NULL_HANDLE;
-        if (vkQueueSubmit2(mImpl->mGraphicsQueue, 1, &info, vkFence) != VK_SUCCESS) {
+        if (!queue.Submit(commandList, submitInfo, fence)) {
             return Fail("Failed to submit command buffer");
         }
         return true;
@@ -699,6 +702,23 @@ namespace moe::rhi {
         }
         mImpl->FlushDeferredDeletions();
         return true;
+    }
+
+    bool Device::GetQueue(QueueType type, Queue& outQueue) const {
+        outQueue.mDevice = reinterpret_cast<uintptr_t>(mImpl->mDevice);
+        outQueue.mType = type;
+        switch (type) {
+            case QueueType::kGraphics:
+                outQueue.mQueue = reinterpret_cast<uintptr_t>(mImpl->mGraphicsQueue);
+                outQueue.mFamily = mImpl->mGraphicsQueueFamily;
+                break;
+            case QueueType::kCompute:
+            case QueueType::kTransfer:
+                outQueue.mQueue = reinterpret_cast<uintptr_t>(mImpl->mComputeQueue);
+                outQueue.mFamily = mImpl->mComputeQueueFamily;
+                break;
+        }
+        return outQueue.mQueue != 0;
     }
 
     bool Device::GetInstanceHandle(uintptr_t& outInstance) const {

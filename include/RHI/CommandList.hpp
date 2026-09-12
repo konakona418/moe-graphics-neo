@@ -104,6 +104,7 @@ namespace moe::rhi {
 
     private:
         friend class Device;
+        friend class Queue;
         friend class Swapchain;
         friend class BindlessSet;
 

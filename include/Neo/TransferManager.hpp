@@ -73,7 +73,8 @@ namespace moe::neo {
         TransferManager(const TransferManager&) = delete;
         TransferManager& operator=(const TransferManager&) = delete;
 
-        bool Init(rhi::Device& device, moe::Scheduler& scheduler);
+        bool Init(rhi::Device& device, moe::Scheduler& scheduler,
+                rhi::QueueType readbackQueue = rhi::QueueType::kCompute);
         void Shutdown();
 
         // ---- CPU -> GPU ----

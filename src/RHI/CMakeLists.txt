@@ -9,6 +9,7 @@ add_library(moe-rhi STATIC
   Vulkan/Pipeline.cpp
   Vulkan/PipelineCache.cpp
   Vulkan/PipelineState.cpp
+  Vulkan/Queue.cpp
   Vulkan/RenderGraph.cpp
   Vulkan/Sampler.cpp
   Vulkan/Shader.cpp

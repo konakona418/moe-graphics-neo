@@ -25,6 +25,7 @@ namespace moe::rhi {
             // Deferred: the command buffer may still be in flight when destroyed.
             DeferredDeletion deletion;
             deletion.mCommandBuffer = mImpl->mCommandBuffer;
+            deletion.mCommandBufferPool = mImpl->mPool;
             mImpl->mDevice->EnqueueDeferred(std::move(deletion));
         }
         mImpl.reset();

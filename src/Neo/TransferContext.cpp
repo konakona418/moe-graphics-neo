@@ -3,6 +3,7 @@
 
 #include <Core/Error.hpp>
 #include <RHI/CommandList.hpp>
+#include <RHI/Queue.hpp>
 
 #include <condition_variable>
 #include <cstring>
@@ -40,6 +41,7 @@ namespace moe::neo {
         };
 
         rhi::Device* mDevice{nullptr};
+        rhi::Queue mReadbackQueue;
         rhi::TimelineSemaphore mCompletion;
         uint64_t mNextValue{0};
 
@@ -79,6 +81,10 @@ namespace moe::neo {
             info.mSize = size;
             info.mUsage = rhi::BufferUsage::kTransferSrc | rhi::BufferUsage::kTransferDst;
             info.mCpuVisible = true;
+            // A slot may be used by the graphics queue (upload) or the readback
+            // queue, so share it across families instead of transferring
+            // ownership.
+            info.mSharedAcrossQueues = true;
             if (!mDevice->CreateBuffer(info, slot->mBuffer)) {
                 return kInvalidTransferSlot;
             }
@@ -172,7 +178,7 @@ namespace moe::neo {
         Shutdown();
     }
 
-    bool TransferContext::Init(rhi::Device& device) {
+    bool TransferContext::Init(rhi::Device& device, rhi::QueueType readbackQueue) {
         MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mRunning) {
             return false;
@@ -181,6 +187,9 @@ namespace moe::neo {
             mImpl = std::make_unique<Impl>();
         }
         mImpl->mDevice = &device;
+        if (!device.GetQueue(readbackQueue, mImpl->mReadbackQueue)) {
+            return moe::Fail("TransferContext: failed to get the readback queue");
+        }
         if (!device.CreateTimelineSemaphore(mImpl->mCompletion)) {
             return moe::Fail("TransferContext: timeline semaphore creation failed: "
                     + moe::Error::Get());
@@ -323,7 +332,7 @@ namespace moe::neo {
         }
         for (auto& request : pending) {
             rhi::CommandList cmd;
-            if (!mImpl->mDevice->CreateCommandList(cmd)) {
+            if (!mImpl->mDevice->CreateCommandList(mImpl->mReadbackQueue.GetType(), cmd)) {
                 mImpl->ReleaseSlot(request.mSlot);
                 continue;
             }
@@ -342,7 +351,7 @@ namespace moe::neo {
             rhi::TimelineSignal signal{&mImpl->mCompletion, value};
             rhi::SubmitInfo submit{};
             submit.mSignals = std::span<const rhi::TimelineSignal>(&signal, 1);
-            if (!mImpl->mDevice->Submit(cmd, submit)) {
+            if (!mImpl->mReadbackQueue.Submit(cmd, submit)) {
                 cmd.Destroy();
                 mImpl->ReleaseSlot(request.mSlot);
                 continue;

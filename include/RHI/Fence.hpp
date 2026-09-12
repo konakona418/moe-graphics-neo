@@ -36,6 +36,7 @@ namespace moe::rhi {
 
     private:
         friend class Device;
+        friend class Queue;
 
         std::unique_ptr<FenceImpl> mImpl;
     };

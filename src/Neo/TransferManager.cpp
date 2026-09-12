@@ -142,7 +142,8 @@ namespace moe::neo {
         Shutdown();
     }
 
-    bool TransferManager::Init(rhi::Device& device, moe::Scheduler& scheduler) {
+    bool TransferManager::Init(rhi::Device& device, moe::Scheduler& scheduler,
+            rhi::QueueType readbackQueue) {
         MOE_PROFILE_ZONE();
         if (mImpl && mImpl->mRunning) {
             return false;
@@ -152,7 +153,7 @@ namespace moe::neo {
         }
         mImpl->mDevice = &device;
         mImpl->mScheduler = &scheduler;
-        if (!mImpl->mContext.Init(device)) {
+        if (!mImpl->mContext.Init(device, readbackQueue)) {
             return false;
         }
         mImpl->mRunning = true;

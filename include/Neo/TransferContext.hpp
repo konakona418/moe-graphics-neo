@@ -30,7 +30,8 @@ namespace moe::neo {
         TransferContext(const TransferContext&) = delete;
         TransferContext& operator=(const TransferContext&) = delete;
 
-        bool Init(rhi::Device& device);
+        bool Init(rhi::Device& device,
+                rhi::QueueType readbackQueue = rhi::QueueType::kCompute);
         void Shutdown();
 
         // CPU->GPU: staging write + copy into dst, with a transfer->dstStage
@@ -62,7 +63,9 @@ namespace moe::neo {
         TransferSlotId AcquireStaging(uint64_t size);
         rhi::Buffer& GetStagingBuffer(TransferSlotId slot);
 
-        // Submits queued readback copies. Call once per frame after Present.
+        // Submits queued readback copies on the readback queue. Call once per
+        // frame after Present. Uploads always run on the graphics queue (their
+        // destinations are read by graphics, so no cross-queue hand-off).
         void Pump();
 
         // Blocks until every submitted copy has been processed. The GPU must be

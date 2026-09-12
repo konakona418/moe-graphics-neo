@@ -31,6 +31,10 @@ namespace examples {
         moe::Defer deviceCleanup([&] { mDevice.Destroy(); });
         moe::Defer cacheCleanup([&] { mPipelineCache.Destroy(); });
 
+        if (!mDevice.GetQueue(moe::rhi::QueueType::kCompute, mComputeQueue)) {
+            return false;
+        }
+
         // clamp the requested MSAA level to what the device supports
         uint32_t sampleCount = callbacks.mSampleCount;
         if (sampleCount != 1 && sampleCount != 2 && sampleCount != 4 && sampleCount != 8) {
@@ -103,7 +107,7 @@ namespace examples {
         }
 
         AppContext ctx{mDevice, mPipelineCache, mWindow, mSwapchain, mIm3d, mInput, mAssets,
-                mScheduler, mTransfer, sampleCount};
+                mScheduler, mTransfer, mComputeQueue, mFrameWaits, sampleCount};
         if (callbacks.mSetup != nullptr && !callbacks.mSetup(callbacks.mUserdata, ctx)) {
             return moe::Fail("Setup failed");
         }
@@ -155,11 +159,12 @@ namespace examples {
             }
 
             mCommandList.End();
-            if (!mSwapchain.Present(mCommandList)) {
+            if (!mSwapchain.Present(mCommandList, mFrameWaits)) {
                 moe::Error::Set("Present failed");
                 failed = true;
                 break;
             }
+            mFrameWaits.clear();
             // Submit any readback copies queued this frame (after Present so
             // they execute after the frame's GPU work), then drain main-thread
             // completions posted by the transfer context's completion thread.

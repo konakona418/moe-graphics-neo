@@ -50,8 +50,10 @@ namespace moe::rhi {
         void EndTransfer(CommandList& cmd);
 
         // Submits the recorded command list (waiting on image availability,
-        // signaling render completion) and presents the current image.
-        bool Present(CommandList& cmd);
+        // signaling render completion) and presents the current image. Extra
+        // timeline waits (e.g. an async compute queue's completion) are folded
+        // into the same submission, so the graphics queue waits for them.
+        bool Present(CommandList& cmd, std::span<const TimelineWait> waits = {});
 
         uint32_t GetWidth() const;
         uint32_t GetHeight() const;

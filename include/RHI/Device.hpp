@@ -18,6 +18,7 @@ namespace moe::rhi {
     class ComputePipeline;
     class TimelineSemaphore;
     class Fence;
+    class Queue;
     struct GraphicsPipelineState;
     struct ComputePipelineState;
     struct DeviceImpl;
@@ -73,6 +74,8 @@ namespace moe::rhi {
         // Creates a binary fence, unsignaled unless `signaled` is true.
         bool CreateFence(Fence& outFence, bool signaled = false);
         bool CreateCommandList(CommandList& outCommandList);
+        // Allocates a command buffer from the pool of `type`'s queue family.
+        bool CreateCommandList(QueueType type, CommandList& outCommandList);
         // Creates a present-capable swapchain from an opaque VkSurfaceKHR handle
         // (created by the caller, e.g. neo::Window). The graphics queue is used
         // for present; the surface must be compatible with it. sampleCount > 1
@@ -100,6 +103,11 @@ namespace moe::rhi {
                 Fence* fence = nullptr);
 
         bool WaitIdle();
+
+        // Fills a non-owning handle to one of the device's queues. kCompute
+        // (and kTransfer) resolve to a family separate from graphics when the
+        // device has one, else to graphics.
+        bool GetQueue(QueueType type, Queue& outQueue) const;
 
         // Returns the underlying VkInstance as an opaque handle (used to create
         // a surface via GLFW; requires mEnablePresent).

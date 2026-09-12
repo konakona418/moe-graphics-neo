@@ -3,6 +3,7 @@
 
 #include "RHI/CommandList.hpp"
 #include "RHI/Image.hpp"
+#include "RHI/TimelineSemaphore.hpp"
 #include "Mappings.hpp"
 #include "RhiAssert.hpp"
 #include "RhiInternal.hpp"
@@ -185,7 +186,7 @@ namespace moe::rhi {
         mImpl->mCurrentLayout = ImageLayout::kPresentSrc;
     }
 
-    bool Swapchain::Present(CommandList& cmd) {
+    bool Swapchain::Present(CommandList& cmd, std::span<const TimelineWait> waits) {
         MOE_PROFILE_ZONE();
         if (mImpl == nullptr || mImpl->mSwapchain == VK_NULL_HANDLE
                 || mImpl->mCurrentImage >= mImpl->mRenderFinished.size()) {
@@ -194,19 +195,40 @@ namespace moe::rhi {
 
         VkSemaphore renderFinished = mImpl->mRenderFinished[mImpl->mCurrentImage];
 
-        // vkQueueSubmit's wait-stage mask uses the 32-bit VkPipelineStageFlags
-        // (not the 64-bit VkPipelineStageFlagBits2 used by synchronization2).
-        const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        VkSubmitInfo submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit.waitSemaphoreCount = 1;
-        submit.pWaitSemaphores = &mImpl->mImageAvailable;
-        submit.pWaitDstStageMask = &waitStage;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &cmd.mImpl->mCommandBuffer;
-        submit.signalSemaphoreCount = 1;
-        submit.pSignalSemaphores = &renderFinished;
-        if (vkQueueSubmit(mImpl->mDevice->mGraphicsQueue, 1, &submit, mImpl->mInFlight) != VK_SUCCESS) {
+        std::vector<VkSemaphoreSubmitInfo> waitInfos;
+        waitInfos.reserve(1 + waits.size());
+        VkSemaphoreSubmitInfo imageAvailable{};
+        imageAvailable.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        imageAvailable.semaphore = mImpl->mImageAvailable;
+        imageAvailable.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        waitInfos.push_back(imageAvailable);
+        for (const auto& wait : waits) {
+            VkSemaphoreSubmitInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+            info.semaphore = wait.mSemaphore->mImpl->mSemaphore;
+            info.value = wait.mValue;
+            info.stageMask = ToVkPipelineStage(wait.mStage);
+            waitInfos.push_back(info);
+        }
+
+        VkSemaphoreSubmitInfo signalInfo{};
+        signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        signalInfo.semaphore = renderFinished;
+        signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+        VkCommandBufferSubmitInfo commandInfo{};
+        commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        commandInfo.commandBuffer = cmd.mImpl->mCommandBuffer;
+
+        VkSubmitInfo2 submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        submit.waitSemaphoreInfoCount = static_cast<uint32_t>(waitInfos.size());
+        submit.pWaitSemaphoreInfos = waitInfos.data();
+        submit.commandBufferInfoCount = 1;
+        submit.pCommandBufferInfos = &commandInfo;
+        submit.signalSemaphoreInfoCount = 1;
+        submit.pSignalSemaphoreInfos = &signalInfo;
+        if (vkQueueSubmit2(mImpl->mDevice->mGraphicsQueue, 1, &submit, mImpl->mInFlight) != VK_SUCCESS) {
             return false;
         }
 

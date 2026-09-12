@@ -7,6 +7,15 @@
 
 namespace moe::rhi {
     class TimelineSemaphore;
+
+    // Device queues. kCompute is a queue family separate from graphics when the
+    // device has one (also used for transfer); kTransfer falls back to it.
+    enum class QueueType : uint32_t {
+        kGraphics,
+        kCompute,
+        kTransfer,
+    };
+
     enum class BufferUsage : uint32_t {
         kUniform = 1 << 0,
         kStorage = 1 << 1,
@@ -259,6 +268,10 @@ namespace moe::rhi {
         uint64_t mSize{0};
         BufferUsage mUsage{BufferUsage::kStorage};
         bool mCpuVisible{false}; // host-visible, mapable for CPU read/write
+        // Concurrent sharing across the device's queue families, for buffers
+        // touched by both graphics and compute/transfer work. Without it the
+        // buffer is exclusive to the graphics family.
+        bool mSharedAcrossQueues{false};
     };
 
     struct ImageCreateInfo {
@@ -274,6 +287,9 @@ namespace moe::rhi {
         // be used as attachments (resolve them into a single-sample image to
         // sample the result).
         uint32_t mSampleCount{1};
+        // Concurrent sharing across the device's queue families (see
+        // BufferCreateInfo::mSharedAcrossQueues).
+        bool mSharedAcrossQueues{false};
     };
 
     struct SamplerCreateInfo {

@@ -8,11 +8,13 @@
 #include <RHI/Device.hpp>
 #include <RHI/Pipeline.hpp>
 #include <RHI/Shader.hpp>
+#include <RHI/TimelineSemaphore.hpp>
 
 #include <imgui.h>
 
 #include <chrono>
 #include <cstdint>
+#include <span>
 #include <cstdio>
 #include <cstdlib>
 
@@ -30,6 +32,8 @@ namespace {
         moe::rhi::Buffer mStorage;
         moe::rhi::Buffer mSyncReadback;
         moe::rhi::CommandList mCmd;
+        moe::rhi::TimelineSemaphore mComputeTimeline;
+        uint64_t mComputeValue{0};
 
         bool mSync{false};
         uint32_t mFrame{0};
@@ -90,18 +94,26 @@ namespace {
             return false;
         }
 
-        if (!ctx.mDevice.CreateCommandList(data->mCmd)) {
+        if (!ctx.mDevice.CreateCommandList(moe::rhi::QueueType::kCompute, data->mCmd)
+                || !ctx.mDevice.CreateTimelineSemaphore(data->mComputeTimeline)) {
             return false;
         }
         return true;
     }
 
     void RecordCompute(AsyncReadbackData& data) {
+        // The compute queue is separate from the frame's graphics queue, so the
+        // frame fence does not cover it: wait for the previous submission before
+        // resetting the command buffer.
+        if (data.mComputeValue > 0) {
+            data.mComputeTimeline.Wait(data.mComputeValue);
+        }
         data.mCmd.Begin();
         data.mCmd.BindDescriptorSet(data.mPipeline, data.mSet, 0);
         data.mCmd.SetPushConstants(data.mPipeline, 0, sizeof(uint32_t), &data.mFrame);
         data.mCmd.Dispatch(data.mPipeline, kElementCount / 64, 1, 1);
         data.mCmd.End();
+        data.mComputeValue++;
     }
 
     void PostRender(void* userdata, examples::AppContext& ctx, moe::rhi::CommandList&) {
@@ -110,13 +122,20 @@ namespace {
         RecordCompute(*data);
 
         const auto start = std::chrono::steady_clock::now();
+        // Signal this submission's timeline value in both modes so the next
+        // frame can safely reset the command buffer (and validation can see it
+        // complete).
+        moe::rhi::TimelineSignal signal{&data->mComputeTimeline, data->mComputeValue};
+        moe::rhi::SubmitInfo submit{};
+        submit.mSignals = std::span<const moe::rhi::TimelineSignal>(&signal, 1);
+
         if (data->mSync) {
             // Blocking path: run, copy into a CPU-visible buffer, wait, map.
-            if (!ctx.mDevice.Submit(data->mCmd, true)) {
+            if (!ctx.mComputeQueue.Submit(data->mCmd, submit)) {
                 return;
             }
             moe::rhi::CommandList copyCmd;
-            if (!ctx.mDevice.CreateCommandList(copyCmd)) {
+            if (!ctx.mDevice.CreateCommandList(moe::rhi::QueueType::kCompute, copyCmd)) {
                 return;
             }
             copyCmd.Begin();
@@ -128,7 +147,9 @@ namespace {
             copyCmd.BufferBarrier(data->mStorage, sync);
             copyCmd.CopyBuffer(data->mStorage, data->mSyncReadback, kByteCount);
             copyCmd.End();
-            ctx.mDevice.Submit(copyCmd, true);
+            // The copy is on the same queue and after the compute, so waiting
+            // for it also waits for the compute.
+            ctx.mComputeQueue.Submit(copyCmd, true);
             copyCmd.Destroy();
 
             auto* mapped = static_cast<uint32_t*>(data->mSyncReadback.Map());
@@ -139,7 +160,7 @@ namespace {
             data->mLatency = 0;
         } else {
             // Async path: submit and enqueue a readback; never waits.
-            if (!ctx.mDevice.Submit(data->mCmd, false)) {
+            if (!ctx.mComputeQueue.Submit(data->mCmd, submit)) {
                 return;
             }
             if (!data->mHasPending) {
@@ -179,6 +200,7 @@ namespace {
     void Shutdown(void* userdata, examples::AppContext&) {
         auto* data = static_cast<AsyncReadbackData*>(userdata);
         data->mCmd.Destroy();
+        data->mComputeTimeline.Destroy();
         data->mSet.Destroy();
         data->mSyncReadback.Destroy();
         data->mStorage.Destroy();

@@ -99,6 +99,7 @@ namespace moe::rhi {
         VkBuffer mBuffer{VK_NULL_HANDLE};
         VmaAllocation mAllocation{VK_NULL_HANDLE};
         VkCommandBuffer mCommandBuffer{VK_NULL_HANDLE};
+        VkCommandPool mCommandBufferPool{VK_NULL_HANDLE}; // pool the buffer came from
         VkImage mImage{VK_NULL_HANDLE};
         VkImageView mImageView{VK_NULL_HANDLE};
         VkSampler mSampler{VK_NULL_HANDLE};
@@ -126,13 +127,35 @@ namespace moe::rhi {
         VkDevice mDevice{VK_NULL_HANDLE};
         VkQueue mGraphicsQueue{VK_NULL_HANDLE};
         uint32_t mGraphicsQueueFamily{0};
+        VkQueue mComputeQueue{VK_NULL_HANDLE};
+        uint32_t mComputeQueueFamily{0};
         // highest sample count supported for both color and depth attachments
         uint32_t mMaxSampleCount{1};
         // cached combined depth-stencil format (see Device::GetDepthStencilFormat)
         mutable Format mDepthStencilFormat{Format::kUndefined};
-        VkCommandPool mCommandPool{VK_NULL_HANDLE};
+        // one command pool per queue family (a pool is tied to one family)
+        std::vector<VkCommandPool> mCommandPools;
         VmaAllocator mAllocator{VK_NULL_HANDLE};
         std::vector<DeferredDeletion> mDeferredDeletions;
+
+        // Creates (once) the command pool for `family` and returns it, or
+        // VK_NULL_HANDLE on failure. Never hardcodes a family index.
+        VkCommandPool GetOrCreateCommandPool(uint32_t family) {
+            if (family >= mCommandPools.size()) {
+                mCommandPools.resize(family + 1, VK_NULL_HANDLE);
+            }
+            if (mCommandPools[family] == VK_NULL_HANDLE) {
+                VkCommandPoolCreateInfo poolInfo{};
+                poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+                poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+                poolInfo.queueFamilyIndex = family;
+                if (vkCreateCommandPool(mDevice, &poolInfo, nullptr, &mCommandPools[family])
+                        != VK_SUCCESS) {
+                    return VK_NULL_HANDLE;
+                }
+            }
+            return mCommandPools[family];
+        }
 
         void EnqueueDeferred(DeferredDeletion deletion) {
             mDeferredDeletions.push_back(std::move(deletion));
@@ -155,8 +178,8 @@ namespace moe::rhi {
                 if (d.mBuffer != VK_NULL_HANDLE) {
                     vmaDestroyBuffer(mAllocator, d.mBuffer, d.mAllocation);
                 }
-                if (d.mCommandBuffer != VK_NULL_HANDLE) {
-                    vkFreeCommandBuffers(mDevice, mCommandPool, 1, &d.mCommandBuffer);
+                if (d.mCommandBuffer != VK_NULL_HANDLE && d.mCommandBufferPool != VK_NULL_HANDLE) {
+                    vkFreeCommandBuffers(mDevice, d.mCommandBufferPool, 1, &d.mCommandBuffer);
                 }
                 if (d.mImageView != VK_NULL_HANDLE) {
                     vkDestroyImageView(mDevice, d.mImageView, nullptr);
@@ -180,6 +203,7 @@ namespace moe::rhi {
 
     struct CommandListImpl {
         VkCommandBuffer mCommandBuffer{VK_NULL_HANDLE};
+        VkCommandPool mPool{VK_NULL_HANDLE};
         bool mRecording{false};
         DeviceImpl* mDevice{nullptr};
     };

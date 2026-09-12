@@ -256,3 +256,21 @@ if(TARGET moe-shaders)
 endif()
 
 add_test(NAME async-readback-smoke COMMAND moe-neo-async-readback-smoke)
+
+add_executable(moe-rhi-cross-queue-smoke
+  CrossQueueSmoke.cpp
+)
+
+target_link_libraries(moe-rhi-cross-queue-smoke PRIVATE
+  moe-neo
+)
+
+target_compile_definitions(moe-rhi-cross-queue-smoke PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-rhi-cross-queue-smoke moe-shaders)
+endif()
+
+add_test(NAME cross-queue-smoke COMMAND moe-rhi-cross-queue-smoke)

@@ -42,6 +42,8 @@ namespace moe::rhi {
 
     private:
         friend class Device;
+        friend class Queue;
+        friend class Swapchain;
 
         std::unique_ptr<TimelineSemaphoreImpl> mImpl;
     };

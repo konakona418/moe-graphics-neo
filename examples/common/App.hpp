@@ -7,6 +7,7 @@
 #include <RHI/CommandList.hpp>
 #include <RHI/Device.hpp>
 #include <RHI/PipelineCache.hpp>
+#include <RHI/Queue.hpp>
 #include <RHI/Swapchain.hpp>
 #include <UI/DebugUI.hpp>
 #include <UI/Im3dDrawer.hpp>
@@ -15,6 +16,7 @@
 
 #include <chrono>
 #include <string>
+#include <vector>
 
 namespace examples {
     struct AppContext {
@@ -30,6 +32,13 @@ namespace examples {
         // per frame by the App loop.
         moe::Scheduler& mScheduler;
         moe::neo::TransferManager& mTransfer;
+        // A queue family separate from graphics (falls back to graphics on
+        // unified devices); submit async compute here.
+        moe::rhi::Queue& mComputeQueue;
+        // Extra timeline waits for this frame's graphics submission: append an
+        // async queue's (semaphore, value) so Present waits for it. Cleared
+        // each frame by the App loop.
+        std::vector<moe::rhi::TimelineWait>& mFrameWaits;
         // Effective MSAA level (clamped to device support); pass it to
         // neo::Renderer::Init so the renderer and swapchain agree.
         uint32_t mSampleCount{1};
@@ -86,6 +95,8 @@ namespace examples {
         // Declared after mDevice so they are torn down before it.
         moe::Scheduler mScheduler;
         moe::neo::TransferManager mTransfer;
+        moe::rhi::Queue mComputeQueue;
+        std::vector<moe::rhi::TimelineWait> mFrameWaits;
         moe::ui::DebugUI mDebugUI;
         moe::ui::Im3dDrawer mIm3d;
         bool mUiActive{false};
