@@ -228,3 +228,35 @@ target_compile_definitions(moe-example-hakoniwa PRIVATE
 if(TARGET moe-shaders)
     add_dependencies(moe-example-hakoniwa moe-shaders)
 endif()
+
+add_executable(moe-example-fluid2d
+  fluid2d/main.cpp
+)
+
+target_link_libraries(moe-example-fluid2d PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-fluid2d PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-fluid2d moe-shaders)
+endif()
+
+add_executable(moe-example-fluid3d
+  fluid3d/main.cpp
+)
+
+target_link_libraries(moe-example-fluid3d PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-fluid3d PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-fluid3d moe-shaders)
+endif()
