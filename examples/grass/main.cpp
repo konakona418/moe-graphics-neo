@@ -287,7 +287,7 @@ namespace {
             return false;
         }
 
-        const char* shaderDir = MOE_SOURCE_DIR "/shaders/examples/";
+        const char* shaderDir = MOE_SOURCE_DIR "/shaders/examples/grass/";
         if (!data->mSceneVert.Load((std::string(shaderDir) + "grass_scene.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
                 || !data->mSceneFrag.Load((std::string(shaderDir) + "grass_scene.frag.spv").c_str(), moe::rhi::ShaderStage::kFragment)
                 || !data->mSceneProgram.AddShader(data->mSceneVert)

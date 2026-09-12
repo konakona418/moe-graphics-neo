@@ -224,14 +224,14 @@ namespace {
         }
 
         // reuse the Nubis3 volume/noise/light-grid compute shaders
-        if (!SetupCompute(ctx.mDevice, MOE_SOURCE_DIR "/shaders/examples/nubis_volume.comp.spv",
+        if (!SetupCompute(ctx.mDevice, MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_volume.comp.spv",
                     data->mVolumeComp, data->mVolumeProgram, data->mVolumePipeline,
                     data->mVolumeSetLayout, data->mVolumeSet)
-                || !SetupCompute(ctx.mDevice, MOE_SOURCE_DIR "/shaders/examples/nubis_noise.comp.spv",
+                || !SetupCompute(ctx.mDevice, MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_noise.comp.spv",
                         data->mNoiseComp, data->mNoiseProgram, data->mNoisePipeline,
                         data->mNoiseSetLayout, data->mNoiseSet)
                 || !SetupCompute(ctx.mDevice,
-                        MOE_SOURCE_DIR "/shaders/examples/nubis_lightgrid.comp.spv",
+                        MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_lightgrid.comp.spv",
                         data->mLightGridComp, data->mLightGridProgram, data->mLightGridPipeline,
                         data->mLightGridSetLayout, data->mLightGridSet)) {
             return false;
@@ -251,8 +251,8 @@ namespace {
         }
 
         data->mCloudProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/toon_cloud.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/toon_cloud.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/toon_cloud/toon_cloud.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/toon_cloud/toon_cloud.frag.spv");
         if (!data->mCloudProgram.IsValid()) {
             std::fprintf(stderr, "toon_cloud: cloud shader: %s\n", moe::Error::Get().c_str());
             return false;

@@ -7,7 +7,7 @@
 //   B = low  frequency alligator (billow)
 //   A = high frequency alligator (billow)
 
-#include "examples/nubis_common.slang"
+#include "examples/nubis/nubis_common.slang"
 
 [[vk::binding(0, 0)]] RWTexture3D<float4> noiseOut;
 

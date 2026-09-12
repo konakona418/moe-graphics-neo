@@ -35,8 +35,8 @@ namespace {
             return false;
         }
         data->mProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/textured.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/textured.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/textured/textured.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/textured/textured.frag.spv");
         if (!data->mProgram.IsValid()) {
             std::fprintf(stderr, "textured: shader load: %s\n", moe::Error::Get().c_str());
             return false;

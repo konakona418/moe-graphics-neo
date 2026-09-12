@@ -310,8 +310,8 @@ namespace {
         data->mUi.GetTheme().mFont = data->mFont;
 
         data->mComposite = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/ui_composite.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/ui_composite.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/ui/ui_composite.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/ui/ui_composite.frag.spv");
         if (!data->mComposite.IsValid()) {
             std::fprintf(stderr, "ui: composite shader: %s\n", moe::Error::Get().c_str());
             return false;

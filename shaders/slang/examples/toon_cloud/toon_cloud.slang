@@ -8,7 +8,7 @@
 // pixel-space coordinate system used by the halftone demo. Single full-res
 // pass straight into the swapchain.
 
-#include "examples/nubis_common.slang"
+#include "examples/nubis/nubis_common.slang"
 
 struct PushConstants {
     float3 mCameraPos;

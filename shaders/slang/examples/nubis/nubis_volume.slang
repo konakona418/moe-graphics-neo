@@ -10,7 +10,7 @@
 //   B = density scale         [0,1]
 //   A = signed distance       world metres (negative inside)
 
-#include "examples/nubis_common.slang"
+#include "examples/nubis/nubis_common.slang"
 
 [[vk::binding(0, 0)]] RWTexture3D<float4> nvdfOut;
 

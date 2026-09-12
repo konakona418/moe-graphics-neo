@@ -98,7 +98,7 @@ namespace {
         }
 
         // raw compute pipeline for the noise volume (outside the Renderer)
-        if (!data->mNoiseComp.Load(MOE_SOURCE_DIR "/shaders/examples/clouds_noise.comp.spv",
+        if (!data->mNoiseComp.Load(MOE_SOURCE_DIR "/shaders/examples/clouds/clouds_noise.comp.spv",
                     moe::rhi::ShaderStage::kCompute)
                 || !data->mNoiseProgram.AddShader(data->mNoiseComp)) {
             std::fprintf(stderr, "clouds: noise shader: %s\n", moe::Error::Get().c_str());
@@ -117,8 +117,8 @@ namespace {
 
         // content layer for the raymarch program + renderer
         data->mCloudProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/clouds.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/clouds.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/clouds/clouds.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/clouds/clouds.frag.spv");
         if (!data->mCloudProgram.IsValid()) {
             std::fprintf(stderr, "clouds: cloud shader: %s\n", moe::Error::Get().c_str());
             return false;

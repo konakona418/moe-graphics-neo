@@ -326,7 +326,7 @@ namespace {
             return false;
         }
 
-        const char* shaderDir = MOE_SOURCE_DIR "/shaders/examples/";
+        const char* shaderDir = MOE_SOURCE_DIR "/shaders/examples/halftone/";
         data->mHalftoneProgram = ctx.mAssets.LoadGraphicsProgram(
                 (std::string(shaderDir) + "halftone.vert.spv").c_str(),
                 (std::string(shaderDir) + "halftone.frag.spv").c_str());

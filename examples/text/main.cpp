@@ -182,8 +182,8 @@ namespace {
         }
 
         data->mProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/text.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/text.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/text/text.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/text/text.frag.spv");
         if (!data->mProgram.IsValid()) {
             std::fprintf(stderr, "text: shader load: %s\n", moe::Error::Get().c_str());
             return false;

@@ -203,7 +203,7 @@ namespace {
         }
 
         // ---- cull compute (raw: runs between Renderer passes) ----
-        if (!data->mCullComp.Load(MOE_SOURCE_DIR "/shaders/examples/forwardplus_cull.comp.spv",
+        if (!data->mCullComp.Load(MOE_SOURCE_DIR "/shaders/examples/forwardplus/forwardplus_cull.comp.spv",
                     moe::rhi::ShaderStage::kCompute)
                 || !data->mCullProgram.AddShader(data->mCullComp)) {
             std::fprintf(stderr, "forwardplus: cull shader: %s\n", moe::Error::Get().c_str());
@@ -223,8 +223,8 @@ namespace {
 
         // ---- forward program (content layer) + renderer ----
         data->mForwardProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/forwardplus.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/forwardplus.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/forwardplus/forwardplus.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/forwardplus/forwardplus.frag.spv");
         if (!data->mForwardProgram.IsValid()) {
             std::fprintf(stderr, "forwardplus: forward shader: %s\n", moe::Error::Get().c_str());
             return false;

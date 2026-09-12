@@ -221,15 +221,15 @@ namespace {
         }
 
         if (!SetupCompute(ctx.mDevice,
-                    MOE_SOURCE_DIR "/shaders/examples/nubis_volume.comp.spv",
+                    MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_volume.comp.spv",
                     data->mVolumeComp, data->mVolumeProgram, data->mVolumePipeline,
                     data->mVolumeSetLayout, data->mVolumeSet)
                 || !SetupCompute(ctx.mDevice,
-                        MOE_SOURCE_DIR "/shaders/examples/nubis_noise.comp.spv",
+                        MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_noise.comp.spv",
                         data->mNoiseComp, data->mNoiseProgram, data->mNoisePipeline,
                         data->mNoiseSetLayout, data->mNoiseSet)
                 || !SetupCompute(ctx.mDevice,
-                        MOE_SOURCE_DIR "/shaders/examples/nubis_lightgrid.comp.spv",
+                        MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_lightgrid.comp.spv",
                         data->mLightGridComp, data->mLightGridProgram, data->mLightGridPipeline,
                         data->mLightGridSetLayout, data->mLightGridSet)) {
             return false;
@@ -249,8 +249,8 @@ namespace {
         }
 
         data->mCloudProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/nubis.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/nubis.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/nubis/nubis.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/nubis/nubis.frag.spv");
         if (!data->mCloudProgram.IsValid()) {
             std::fprintf(stderr, "nubis: cloud shader: %s\n", moe::Error::Get().c_str());
             return false;
@@ -270,8 +270,8 @@ namespace {
         }
 
         data->mCompositeProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/nubis_composite.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/nubis_composite.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_composite.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/nubis/nubis_composite.frag.spv");
         if (!data->mCompositeProgram.IsValid()) {
             std::fprintf(stderr, "nubis: composite shader: %s\n", moe::Error::Get().c_str());
             return false;

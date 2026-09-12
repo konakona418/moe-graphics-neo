@@ -6,7 +6,7 @@
 //
 // Grid covers the same world box as the NVDF volume, at lower resolution.
 
-#include "examples/nubis_common.slang"
+#include "examples/nubis/nubis_common.slang"
 
 [[vk::binding(0, 0)]] RWTexture3D<float4> gridOut;
 [[vk::binding(1, 0)]] Texture3D<float4> nvdf;

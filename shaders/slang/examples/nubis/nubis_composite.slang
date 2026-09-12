@@ -5,7 +5,7 @@
 // tonemap with a white point of 1.0 (which is what gives the vivid look),
 // then a dark vignette.
 
-#include "examples/nubis_common.slang"
+#include "examples/nubis/nubis_common.slang"
 
 struct PushConstants {
     float2 mSunScreen;      // sun direction projected to uv

@@ -253,9 +253,9 @@ namespace {
         }
 
         // ---- compute pipelines ----
-        if (!data->mBrushComp.Load(MOE_SOURCE_DIR "/shaders/examples/snow_brush.comp.spv",
+        if (!data->mBrushComp.Load(MOE_SOURCE_DIR "/shaders/examples/snow/snow_brush.comp.spv",
                     moe::rhi::ShaderStage::kCompute)
-                || !data->mBuildComp.Load(MOE_SOURCE_DIR "/shaders/examples/snow_build.comp.spv",
+                || !data->mBuildComp.Load(MOE_SOURCE_DIR "/shaders/examples/snow/snow_build.comp.spv",
                         moe::rhi::ShaderStage::kCompute)
                 || !data->mBrushProgram.AddShader(data->mBrushComp)
                 || !data->mBuildProgram.AddShader(data->mBuildComp)) {
@@ -286,8 +286,8 @@ namespace {
 
         // ---- forward program (content layer) + renderer ----
         data->mProgram = ctx.mAssets.LoadGraphicsProgram(
-                MOE_SOURCE_DIR "/shaders/examples/snow.vert.spv",
-                MOE_SOURCE_DIR "/shaders/examples/snow.frag.spv");
+                MOE_SOURCE_DIR "/shaders/examples/snow/snow.vert.spv",
+                MOE_SOURCE_DIR "/shaders/examples/snow/snow.frag.spv");
         if (!data->mProgram.IsValid()) {
             std::fprintf(stderr, "snow: shader load: %s\n", moe::Error::Get().c_str());
             return false;

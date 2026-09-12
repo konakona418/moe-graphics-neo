@@ -77,8 +77,8 @@ namespace {
             return false;
         }
 
-        if (!data->mVert.Load(MOE_SOURCE_DIR "/shaders/examples/forward.vert.spv", moe::rhi::ShaderStage::kVertex)
-                || !data->mFrag.Load(MOE_SOURCE_DIR "/shaders/examples/forward.frag.spv", moe::rhi::ShaderStage::kFragment)) {
+        if (!data->mVert.Load(MOE_SOURCE_DIR "/shaders/examples/forward/forward.vert.spv", moe::rhi::ShaderStage::kVertex)
+                || !data->mFrag.Load(MOE_SOURCE_DIR "/shaders/examples/forward/forward.frag.spv", moe::rhi::ShaderStage::kFragment)) {
             std::fprintf(stderr, "forward: shader load failed\n");
             return false;
         }

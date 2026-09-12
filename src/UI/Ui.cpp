@@ -68,16 +68,16 @@ namespace moe::ui {
 
     bool Ui::Impl::EnsureResources() {
         if (!mProgram.IsValid()) {
-            mProgram = mAssets->LoadGraphicsProgram(MOE_SOURCE_DIR "/shaders/examples/ui.vert.spv",
-                    MOE_SOURCE_DIR "/shaders/examples/ui.frag.spv");
+            mProgram = mAssets->LoadGraphicsProgram(MOE_SOURCE_DIR "/shaders/examples/ui/ui.vert.spv",
+                    MOE_SOURCE_DIR "/shaders/examples/ui/ui.frag.spv");
             if (!mProgram.IsValid()) {
                 return false;
             }
         }
         if (!mTextProgram.IsValid()) {
             mTextProgram = mAssets->LoadGraphicsProgram(
-                    MOE_SOURCE_DIR "/shaders/examples/text.vert.spv",
-                    MOE_SOURCE_DIR "/shaders/examples/text.frag.spv");
+                    MOE_SOURCE_DIR "/shaders/examples/text/text.vert.spv",
+                    MOE_SOURCE_DIR "/shaders/examples/text/text.frag.spv");
             if (!mTextProgram.IsValid()) {
                 return false;
             }

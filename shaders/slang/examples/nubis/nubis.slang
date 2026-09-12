@@ -4,7 +4,7 @@
 // profile with the detail-noise volume, lights it through the precomputed light
 // grid, and composites over a Preetham sky. Single full-res pass.
 
-#include "examples/nubis_common.slang"
+#include "examples/nubis/nubis_common.slang"
 
 struct PushConstants {
     float3 mCameraPos;

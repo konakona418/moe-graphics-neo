@@ -309,7 +309,7 @@ namespace {
             return false;
         }
 
-        const char* shaderDir = MOE_SOURCE_DIR "/shaders/examples/";
+        const char* shaderDir = MOE_SOURCE_DIR "/shaders/examples/toon/";
         data->mToonProgram = ctx.mAssets.LoadGraphicsProgram(
                 (std::string(shaderDir) + "toon.vert.spv").c_str(),
                 (std::string(shaderDir) + "toon.frag.spv").c_str());
