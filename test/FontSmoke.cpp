@@ -77,15 +77,20 @@ int main() {
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
         return moe::test::Fail(kTestName);
     }
+    moe::Scheduler scheduler;
+    moe::neo::TransferManager transfer;
     moe::neo::Assets assets;
-    if (!assets.Init(device)) {
-        return moe::test::Fail(kTestName);
-    }
     moe::Defer cleanup([&] {
+        transfer.Shutdown();
+        scheduler.Shutdown();
         assets.Destroy();
         cache.Destroy();
         device.Destroy();
     });
+    if (!scheduler.Init(2) || !transfer.Init(device, scheduler)
+            || !assets.Init(device, transfer)) {
+        return moe::test::Fail(kTestName);
+    }
 
     const char* kFont = MOE_SOURCE_DIR "/vendors/imgui/misc/fonts/Roboto-Medium.ttf";
     moe::neo::Font font = assets.LoadFont(kFont, "Hello, Text!");

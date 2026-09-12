@@ -13,7 +13,7 @@
 #include "Neo/Assets.hpp"
 #include "Neo/Cache.hpp"
 #include "Neo/SwapchainImage.hpp"
-#include "Neo/Uploader.hpp"
+#include "Neo/TransferManager.hpp"
 
 #include <glm/glm.hpp>
 
@@ -230,7 +230,7 @@ namespace moe::neo {
         Renderer& operator=(const Renderer&) = delete;
 
         bool Init(rhi::Device& device, rhi::DefaultPipelineCache& cache,
-                uint32_t width, uint32_t height, uint32_t sampleCount = 1);
+                uint32_t width, uint32_t height, uint32_t sampleCount, TransferManager& transfer);
         void Destroy();
 
         // Begins a frame; `frame` is the current swapchain image (acquired

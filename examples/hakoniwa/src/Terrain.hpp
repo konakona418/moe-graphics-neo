@@ -2,7 +2,7 @@
 
 #include <Neo/Assets.hpp>
 #include <Neo/Renderer.hpp>
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 
 #include <glm/glm.hpp>
 
@@ -30,8 +30,9 @@ namespace hakoniwa {
 
     class Terrain {
     public:
-        bool Init(moe::rhi::Device& device, moe::neo::Assets& assets,
-                moe::neo::Renderer& renderer, const TerrainParams& params);
+        bool Init(moe::rhi::Device& device, moe::neo::TransferManager& transfer,
+                moe::neo::Assets& assets, moe::neo::Renderer& renderer,
+                const TerrainParams& params);
         void Record(moe::neo::Assets& assets, moe::neo::Renderer& renderer,
                 moe::neo::RenderTargetHandle target, const TerrainFrame& frame,
                 const TerrainParams& params);
@@ -42,7 +43,7 @@ namespace hakoniwa {
         void Destroy();
 
     private:
-        moe::neo::Uploader mUploader;
+        moe::neo::TransferManager* mTransfer{nullptr};
         moe::neo::ProgramHandle mProgram;
         moe::neo::UploadedMesh mMesh;
         int32_t mPcViewProj{-1};

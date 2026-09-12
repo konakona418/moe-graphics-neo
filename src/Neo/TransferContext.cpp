@@ -291,10 +291,24 @@ namespace moe::neo {
         return mImpl != nullptr ? mImpl->MapSlot(slot) : nullptr;
     }
 
+    void TransferContext::UnmapSlot(TransferSlotId slot) {
+        if (mImpl != nullptr) {
+            mImpl->UnmapSlot(slot);
+        }
+    }
+
     void TransferContext::ReleaseSlot(TransferSlotId slot) {
         if (mImpl != nullptr) {
             mImpl->ReleaseSlot(slot);
         }
+    }
+
+    TransferSlotId TransferContext::AcquireStaging(uint64_t size) {
+        return mImpl != nullptr ? mImpl->AcquireSlot(size) : kInvalidTransferSlot;
+    }
+
+    rhi::Buffer& TransferContext::GetStagingBuffer(TransferSlotId slot) {
+        return mImpl->mSlots[slot]->mBuffer;
     }
 
     void TransferContext::Pump() {

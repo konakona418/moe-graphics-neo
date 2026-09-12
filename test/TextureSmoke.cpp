@@ -3,7 +3,7 @@
 // Exercises DecodeTexture + UploadTexture + image barriers + readback.
 
 #include <Neo/TextureLoader.hpp>
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 
 #include <RHI/CommandList.hpp>
 #include <RHI/PipelineCache.hpp>
@@ -63,8 +63,10 @@ int main() {
     deviceInfo.mEnableValidation = true;
     CHECK(moe::rhi::Device::Create(deviceInfo, device));
 
-    moe::neo::Uploader uploader;
-    CHECK(uploader.Init(device));
+    moe::Scheduler scheduler;
+    CHECK(scheduler.Init(2));
+    moe::neo::TransferManager uploader;
+    CHECK(uploader.Init(device, scheduler));
 
     moe::neo::UploadedTexture gpu;
     CHECK(uploader.UploadTexture(texture, gpu));
@@ -99,6 +101,8 @@ int main() {
     readback.Destroy();
     cmd.Destroy();
     gpu.Destroy();
+    uploader.Shutdown();
+    scheduler.Shutdown();
     cache.Destroy();
     CHECK(device.WaitIdle());
     device.Destroy();

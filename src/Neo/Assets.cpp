@@ -160,15 +160,13 @@ namespace moe::neo {
         Destroy();
     }
 
-    bool Assets::Init(rhi::Device& device) {
+    bool Assets::Init(rhi::Device& device, TransferManager& transfer) {
         MOE_PROFILE_ZONE();
         if (mDevice != nullptr) {
             return moe::Fail("Assets already initialized");
         }
-        if (!mUploader.Init(device)) {
-            return false;
-        }
         mDevice = &device;
+        mTransfer = &transfer;
         return true;
     }
 
@@ -249,7 +247,7 @@ namespace moe::neo {
                 part->mMaterialIndex = primitive.mMaterialIndex >= 0
                         ? static_cast<uint32_t>(primitive.mMaterialIndex) : kInvalidIndex;
                 model->mPartIndices.push_back(partIndex);
-                if (!mUploader.UploadMeshPrimitive(primitive, part->mMesh)) {
+                if (!mTransfer->UploadMeshPrimitive(primitive, part->mMesh)) {
                     rollback();
                     return {};
                 }
@@ -312,7 +310,7 @@ namespace moe::neo {
             return {};
         }
         const TextureHandle handle = mTextures.Emplace();
-        if (!mUploader.UploadTexture(texture, *mTextures.Get(handle))) {
+        if (!mTransfer->UploadTexture(texture, *mTextures.Get(handle))) {
             mTextures.Remove(handle);
             return {};
         }

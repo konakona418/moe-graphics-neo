@@ -1,12 +1,16 @@
-#include "Neo/Uploader.hpp"
+#include "Neo/TransferManager.hpp"
 #include <Core/Profile.hpp>
 
+#include <Core/AsyncEvent.hpp>
 #include <Core/Error.hpp>
 #include <Core/Logger.hpp>
 #include <RHI/CommandList.hpp>
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace moe::neo {
@@ -23,8 +27,8 @@ namespace moe::neo {
             std::memcpy(out.data() + base, &v, sizeof(float) * 2);
         }
 
-        // Interleaves one primitive's attributes (layout chosen by the
-        // presence flags) and appends its indices, rebased on vertexBase.
+        // Interleaves one primitive's attributes (layout chosen by the presence
+        // flags) and appends its indices, rebased on vertexBase.
         void PackPrimitive(const MeshPrimitive& primitive, bool hasNormals, bool hasUvs,
                 bool hasColors, std::vector<uint8_t>& vertexData,
                 std::vector<uint32_t>& indexData, uint32_t vertexBase) {
@@ -60,75 +64,127 @@ namespace moe::neo {
                 indexData.push_back(vertexBase + index);
             }
         }
+
+        struct ReadbackRequest {
+            explicit ReadbackRequest(moe::Scheduler& scheduler) : mEvent(scheduler) {}
+
+            moe::AsyncEvent<ReadbackLease> mEvent;
+            TransferSlotId mSlot{kInvalidTransferSlot};
+            uint32_t mGeneration{0};
+            bool mActive{false};
+        };
     }// namespace
 
-    bool Uploader::Init(rhi::Device& device) {
-        MOE_PROFILE_ZONE();
-        if (!device.WaitIdle()) {
-            return moe::Fail("Uploader: device WaitIdle failed");
-        }
-        mDevice = &device;
-        return true;
+    ReadbackLease::ReadbackLease(std::span<std::byte> bytes, TransferContext* owner, TransferSlotId slot)
+        : mBytes(bytes), mOwner(owner), mSlot(slot) {}
+
+    ReadbackLease::~ReadbackLease() {
+        Reset();
     }
 
-    bool Uploader::CreateStagingBuffer(size_t size, rhi::Buffer& out) {
-        MOE_PROFILE_ZONE();
-        rhi::BufferCreateInfo stagingInfo{};
-        stagingInfo.mSize = size;
-        stagingInfo.mUsage = rhi::BufferUsage::kTransferSrc;
-        stagingInfo.mCpuVisible = true;
-        if (!mDevice->CreateBuffer(stagingInfo, out)) {
-            return moe::Fail("Uploader: staging buffer creation failed: " + moe::Error::Get());
-        }
-        return true;
+    ReadbackLease::ReadbackLease(ReadbackLease&& other) noexcept
+        : mBytes(other.mBytes), mOwner(other.mOwner), mSlot(other.mSlot) {
+        other.mBytes = {};
+        other.mOwner = nullptr;
+        other.mSlot = kInvalidTransferSlot;
     }
 
-    bool Uploader::UploadBytes(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
-            bool waitForCompletion, rhi::PipelineStage dstStage, rhi::Access dstAccess) {
+    ReadbackLease& ReadbackLease::operator=(ReadbackLease&& other) noexcept {
+        if (this != &other) {
+            Reset();
+            mBytes = other.mBytes;
+            mOwner = other.mOwner;
+            mSlot = other.mSlot;
+            other.mBytes = {};
+            other.mOwner = nullptr;
+            other.mSlot = kInvalidTransferSlot;
+        }
+        return *this;
+    }
+
+    void ReadbackLease::Reset() {
+        if (mOwner != nullptr) {
+            mOwner->ReleaseSlot(mSlot);
+            mOwner = nullptr;
+            mBytes = {};
+            mSlot = kInvalidTransferSlot;
+        }
+    }
+
+    struct TransferManager::Impl {
+        rhi::Device* mDevice{nullptr};
+        moe::Scheduler* mScheduler{nullptr};
+        TransferContext mContext;
+        std::vector<std::shared_ptr<ReadbackRequest>> mRequests;
+        std::vector<uint32_t> mFree;
+        bool mRunning{false};
+
+        uint32_t AllocRequest() {
+            if (!mFree.empty()) {
+                const uint32_t index = mFree.back();
+                mFree.pop_back();
+                return index;
+            }
+            mRequests.push_back(std::make_shared<ReadbackRequest>(*mScheduler));
+            return static_cast<uint32_t>(mRequests.size() - 1);
+        }
+
+        void FreeRequest(uint32_t index) {
+            mRequests[index]->mActive = false;
+            mRequests[index]->mGeneration++;
+            mFree.push_back(index);
+        }
+    };
+
+    TransferManager::TransferManager() = default;
+
+    TransferManager::~TransferManager() {
+        Shutdown();
+    }
+
+    bool TransferManager::Init(rhi::Device& device, moe::Scheduler& scheduler) {
         MOE_PROFILE_ZONE();
-        rhi::Buffer staging;
-        if (!CreateStagingBuffer(byteCount, staging)) {
+        if (mImpl && mImpl->mRunning) {
             return false;
         }
-        {
-            auto* mapped = static_cast<uint8_t*>(staging.Map());
-            if (mapped == nullptr) {
-                staging.Destroy();
-                return moe::Fail("Uploader: failed to map staging buffer");
-            }
-            std::memcpy(mapped, data, byteCount);
-            staging.Unmap();
+        if (mImpl == nullptr) {
+            mImpl = std::make_unique<Impl>();
         }
-
-        rhi::CommandList cmd;
-        if (!mDevice->CreateCommandList(cmd)) {
-            staging.Destroy();
-            return moe::Fail("Uploader: command list creation failed");
+        mImpl->mDevice = &device;
+        mImpl->mScheduler = &scheduler;
+        if (!mImpl->mContext.Init(device)) {
+            return false;
         }
-        cmd.Begin();
-        cmd.CopyBuffer(staging, dst, byteCount, 0, 0);
-        // staging write -> shader read (this frame's or next frame's draws)
-        rhi::SyncInfo sync{};
-        sync.mSrcStage = rhi::PipelineStage::kTransfer;
-        sync.mSrcAccess = rhi::Access::kTransferWrite;
-        sync.mDstStage = dstStage;
-        sync.mDstAccess = dstAccess;
-        cmd.BufferBarrier(dst, sync);
-        cmd.End();
-        if (!mDevice->Submit(cmd, waitForCompletion)) {
-            cmd.Destroy();
-            staging.Destroy();
-            return moe::Fail("Uploader: submit failed: " + moe::Error::Get());
-        }
-        cmd.Destroy();
-        staging.Destroy();
+        mImpl->mRunning = true;
         return true;
     }
 
-    bool Uploader::UploadMesh(const Mesh& mesh, UploadedMesh& out) {
+    void TransferManager::Shutdown() {
         MOE_PROFILE_ZONE();
-        if (mDevice == nullptr) {
-            return moe::Fail("Uploader: not initialized");
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            return;
+        }
+        // Drain in-flight readbacks so no completion callback outlives its
+        // request. The GPU must be idle first (e.g. after Device::WaitIdle).
+        mImpl->mContext.Drain();
+        mImpl->mRequests.clear();
+        mImpl->mFree.clear();
+        mImpl->mContext.Shutdown();
+        mImpl->mRunning = false;
+    }
+
+    void TransferManager::Pump() {
+        if (mImpl != nullptr) {
+            mImpl->mContext.Pump();
+        }
+    }
+
+    // ---- CPU -> GPU ----
+
+    bool TransferManager::UploadMesh(const Mesh& mesh, UploadedMesh& out) {
+        MOE_PROFILE_ZONE();
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            return moe::Fail("TransferManager: not initialized");
         }
 
         bool hasNormals = false;
@@ -165,10 +221,10 @@ namespace moe::neo {
         return true;
     }
 
-    bool Uploader::UploadMeshPrimitive(const MeshPrimitive& primitive, UploadedMesh& out) {
+    bool TransferManager::UploadMeshPrimitive(const MeshPrimitive& primitive, UploadedMesh& out) {
         MOE_PROFILE_ZONE();
-        if (mDevice == nullptr) {
-            return moe::Fail("Uploader: not initialized");
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            return moe::Fail("TransferManager: not initialized");
         }
 
         const bool hasNormals = !primitive.mNormals.empty();
@@ -195,7 +251,7 @@ namespace moe::neo {
         return true;
     }
 
-    bool Uploader::UploadMeshData(const std::vector<uint8_t>& vertexData,
+    bool TransferManager::UploadMeshData(const std::vector<uint8_t>& vertexData,
             const std::vector<uint32_t>& indexData, uint32_t stride,
             uint32_t normalOffset, uint32_t uvOffset, uint32_t colorOffset,
             UploadedMesh& out) {
@@ -212,41 +268,21 @@ namespace moe::neo {
         indexInfo.mUsage = rhi::BufferUsage::kIndex | rhi::BufferUsage::kTransferDst
                 | rhi::BufferUsage::kTransferSrc;
 
-        rhi::Buffer staging;
-        if (!mDevice->CreateBuffer(vertexInfo, out.mVertexBuffer)
-                || !mDevice->CreateBuffer(indexInfo, out.mIndexBuffer)
-                || !CreateStagingBuffer(vertexBytes + indexBytes, staging)) {
+        if (!mImpl->mDevice->CreateBuffer(vertexInfo, out.mVertexBuffer)
+                || !mImpl->mDevice->CreateBuffer(indexInfo, out.mIndexBuffer)) {
+            out.mVertexBuffer.Destroy();
+            out.mIndexBuffer.Destroy();
             return false;
         }
-
-        {
-            auto* data = static_cast<uint8_t*>(staging.Map());
-            if (data == nullptr) {
-                out.mVertexBuffer.Destroy();
-                out.mIndexBuffer.Destroy();
-                staging.Destroy();
-                return moe::Fail("Uploader: failed to map staging buffer");
-            }
-            std::memcpy(data, vertexData.data(), vertexData.size());
-            std::memcpy(data + vertexData.size(), indexData.data(), indexData.size() * sizeof(uint32_t));
-            staging.Unmap();
+        if (!mImpl->mContext.Upload(vertexData.data(), vertexBytes, out.mVertexBuffer,
+                    rhi::PipelineStage::kVertexInput, rhi::Access::kVertexAttributeRead, true)
+                || !mImpl->mContext.Upload(reinterpret_cast<const uint8_t*>(indexData.data()),
+                        indexBytes, out.mIndexBuffer, rhi::PipelineStage::kVertexInput,
+                        rhi::Access::kIndexRead, true)) {
+            out.mVertexBuffer.Destroy();
+            out.mIndexBuffer.Destroy();
+            return false;
         }
-
-        rhi::CommandList cmd;
-        if (!mDevice->CreateCommandList(cmd)) {
-            return moe::Fail("Uploader: command list creation failed");
-        }
-        cmd.Begin();
-        cmd.CopyBuffer(staging, out.mVertexBuffer, vertexBytes, 0, 0);
-        cmd.CopyBuffer(staging, out.mIndexBuffer, indexBytes, vertexBytes, 0);
-        cmd.End();
-        if (!mDevice->Submit(cmd, true)) {
-            cmd.Destroy();
-            staging.Destroy();
-            return moe::Fail("Uploader: submit failed: " + moe::Error::Get());
-        }
-        cmd.Destroy();
-        staging.Destroy();
 
         out.mVertexCount = static_cast<uint32_t>(vertexData.size() / stride);
         out.mIndexCount = static_cast<uint32_t>(indexData.size());
@@ -258,17 +294,31 @@ namespace moe::neo {
         return true;
     }
 
-    bool Uploader::UploadTexture(const Texture& texture, UploadedTexture& out) {
+    bool TransferManager::UpdateMeshVertices(const UploadedMesh& mesh,
+            const uint8_t* vertexData, size_t byteCount) {
         MOE_PROFILE_ZONE();
-        if (mDevice == nullptr) {
-            return moe::Fail("Uploader: not initialized");
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            return moe::Fail("TransferManager: not initialized");
+        }
+        if (vertexData == nullptr || byteCount == 0
+                || byteCount > mesh.mVertexBuffer.GetSize()) {
+            return moe::Fail("TransferManager: vertex update out of range");
+        }
+        return mImpl->mContext.Upload(vertexData, byteCount, mesh.mVertexBuffer,
+                rhi::PipelineStage::kVertexInput, rhi::Access::kVertexAttributeRead, false);
+    }
+
+    bool TransferManager::UploadTexture(const Texture& texture, UploadedTexture& out) {
+        MOE_PROFILE_ZONE();
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            return moe::Fail("TransferManager: not initialized");
         }
         if (texture.mData.empty() || texture.mWidth == 0 || texture.mHeight == 0) {
-            return moe::Fail("Uploader: texture has no pixel data");
+            return moe::Fail("TransferManager: texture has no pixel data");
         }
         // RGBA8 only (row pitch is tight and 4-aligned, so no staging tiling)
         if (texture.mChannels != 4) {
-            return moe::Fail("Uploader: only RGBA8 textures are supported");
+            return moe::Fail("TransferManager: only RGBA8 textures are supported");
         }
 
         rhi::ImageCreateInfo imageInfo{};
@@ -280,42 +330,42 @@ namespace moe::neo {
         imageInfo.mFormat = texture.mSrgb ? rhi::Format::kR8G8B8A8Srgb : rhi::Format::kR8G8B8A8Unorm;
         imageInfo.mUsage = rhi::ImageUsage::kSampled | rhi::ImageUsage::kTransferDst
                 | rhi::ImageUsage::kTransferSrc; // kTransferSrc: readback/debug
-        if (!mDevice->CreateImage(imageInfo, out.mImage)) {
-            return moe::Fail("Uploader: image creation failed: " + moe::Error::Get());
+        if (!mImpl->mDevice->CreateImage(imageInfo, out.mImage)) {
+            return moe::Fail("TransferManager: image creation failed: " + moe::Error::Get());
         }
 
         rhi::SamplerCreateInfo samplerInfo{};
         samplerInfo.mMagFilter = rhi::Filter::kLinear;
         samplerInfo.mMinFilter = rhi::Filter::kLinear;
-        if (!mDevice->CreateSampler(samplerInfo, out.mSampler)) {
+        if (!mImpl->mDevice->CreateSampler(samplerInfo, out.mSampler)) {
             out.mImage.Destroy();
-            return moe::Fail("Uploader: sampler creation failed: " + moe::Error::Get());
+            return moe::Fail("TransferManager: sampler creation failed: " + moe::Error::Get());
         }
 
-        rhi::Buffer staging;
-        if (!CreateStagingBuffer(texture.mData.size(), staging)) {
+        const TransferSlotId slot = mImpl->mContext.AcquireStaging(texture.mData.size());
+        if (slot == kInvalidTransferSlot) {
             out.mSampler.Destroy();
             out.mImage.Destroy();
-            return false;
+            return moe::Fail("TransferManager: staging allocation failed");
         }
         {
-            auto* data = static_cast<uint8_t*>(staging.Map());
+            std::byte* data = mImpl->mContext.MapSlot(slot);
             if (data == nullptr) {
-                staging.Destroy();
+                mImpl->mContext.ReleaseSlot(slot);
                 out.mSampler.Destroy();
                 out.mImage.Destroy();
-                return moe::Fail("Uploader: failed to map staging buffer");
+                return moe::Fail("TransferManager: failed to map staging buffer");
             }
             std::memcpy(data, texture.mData.data(), texture.mData.size());
-            staging.Unmap();
+            mImpl->mContext.UnmapSlot(slot);
         }
 
         rhi::CommandList cmd;
-        if (!mDevice->CreateCommandList(cmd)) {
-            staging.Destroy();
+        if (!mImpl->mDevice->CreateCommandList(cmd)) {
+            mImpl->mContext.ReleaseSlot(slot);
             out.mSampler.Destroy();
             out.mImage.Destroy();
-            return moe::Fail("Uploader: command list creation failed");
+            return moe::Fail("TransferManager: command list creation failed");
         }
         cmd.Begin();
 
@@ -329,8 +379,10 @@ namespace moe::neo {
 
         // Texture::mData packs all mip levels tightly, level 0 first; each
         // level's extent is the base extent shifted down by its index.
+        const rhi::Buffer& staging = mImpl->mContext.GetStagingBuffer(slot);
         const uint32_t levels = texture.mMipLevels;
         size_t offset = 0;
+        bool packedOk = true;
         for (uint32_t level = 0; level < levels; ++level) {
             const uint32_t width = std::max(1u, texture.mWidth >> level);
             const uint32_t height = std::max(1u, texture.mHeight >> level);
@@ -338,15 +390,19 @@ namespace moe::neo {
             const size_t levelBytes = static_cast<size_t>(width) * height * depth
                     * texture.mChannels;
             if (offset + levelBytes > texture.mData.size()) {
-                cmd.Destroy();
-                staging.Destroy();
-                out.mSampler.Destroy();
-                out.mImage.Destroy();
-                return moe::Fail("Uploader: texture data smaller than its mip chain");
+                packedOk = false;
+                break;
             }
             cmd.CopyBufferToImage(staging, out.mImage, level, 0, 1,
                     static_cast<uint32_t>(offset));
             offset += levelBytes;
+        }
+        if (!packedOk) {
+            cmd.Destroy();
+            mImpl->mContext.ReleaseSlot(slot);
+            out.mSampler.Destroy();
+            out.mImage.Destroy();
+            return moe::Fail("TransferManager: texture data smaller than its mip chain");
         }
 
         rhi::SyncInfo toSample{};
@@ -358,42 +414,26 @@ namespace moe::neo {
                 rhi::ImageLayout::kShaderReadOnly, toSample);
 
         cmd.End();
-        if (!mDevice->Submit(cmd, true)) {
+        if (!mImpl->mDevice->Submit(cmd, true)) {
             cmd.Destroy();
-            staging.Destroy();
+            mImpl->mContext.ReleaseSlot(slot);
             out.mSampler.Destroy();
             out.mImage.Destroy();
-            return moe::Fail("Uploader: submit failed: " + moe::Error::Get());
+            return moe::Fail("TransferManager: submit failed: " + moe::Error::Get());
         }
         cmd.Destroy();
-        staging.Destroy();
+        mImpl->mContext.ReleaseSlot(slot);
         moe::Logger::Info("Uploaded texture '{}' ({}x{}x{}, {} ch, {})",
                 texture.mName, texture.mWidth, texture.mHeight, texture.mDepth,
                 texture.mChannels, texture.mSrgb ? "sRGB" : "linear");
         return true;
     }
 
-    bool Uploader::UpdateMeshVertices(const UploadedMesh& mesh,
-            const uint8_t* vertexData, size_t byteCount) {
-        MOE_PROFILE_ZONE();
-        if (mDevice == nullptr) {
-            return moe::Fail("Uploader: not initialized");
-        }
-        if (vertexData == nullptr || byteCount == 0
-                || byteCount > mesh.mVertexBuffer.GetSize()) {
-            return moe::Fail("Uploader: vertex update out of range");
-        }
-
-        // async submit: staging and the command list are released through the
-        // device's deferred-deletion queue once the GPU is done with them
-        return UploadBytes(vertexData, byteCount, mesh.mVertexBuffer, false);
-    }
-
-    bool Uploader::UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
+    bool TransferManager::UploadData(const uint8_t* data, size_t byteCount, rhi::BufferUsage usage,
             rhi::Buffer& out, rhi::PipelineStage dstStage, rhi::Access dstAccess) {
         MOE_PROFILE_ZONE();
-        if (mDevice == nullptr) {
-            return moe::Fail("Uploader: not initialized");
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            return moe::Fail("TransferManager: not initialized");
         }
         if (byteCount == 0 || data == nullptr) {
             return moe::Fail("UploadData: empty data");
@@ -402,10 +442,10 @@ namespace moe::neo {
         rhi::BufferCreateInfo dstInfo{};
         dstInfo.mSize = byteCount;
         dstInfo.mUsage = usage | rhi::BufferUsage::kTransferDst;
-        if (!mDevice->CreateBuffer(dstInfo, out)) {
+        if (!mImpl->mDevice->CreateBuffer(dstInfo, out)) {
             return moe::Fail("UploadData: buffer: " + moe::Error::Get());
         }
-        if (!UploadBytes(data, byteCount, out, true, dstStage, dstAccess)) {
+        if (!mImpl->mContext.Upload(data, byteCount, out, dstStage, dstAccess, true)) {
             out.Destroy();
             return false;
         }
@@ -413,16 +453,76 @@ namespace moe::neo {
         return true;
     }
 
-    bool Uploader::UpdateBuffer(const rhi::Buffer& dst, const void* data, size_t byteCount,
+    bool TransferManager::UpdateBuffer(const rhi::Buffer& dst, const void* data, size_t byteCount,
             rhi::PipelineStage dstStage, rhi::Access dstAccess) {
         MOE_PROFILE_ZONE();
-        if (mDevice == nullptr) {
-            return moe::Fail("Uploader: not initialized");
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            return moe::Fail("TransferManager: not initialized");
         }
         if (byteCount == 0 || data == nullptr || byteCount > dst.GetSize()) {
             return moe::Fail("UpdateBuffer: empty or out of range");
         }
-        return UploadBytes(static_cast<const uint8_t*>(data), byteCount, dst, true, dstStage,
-                dstAccess);
+        return mImpl->mContext.Upload(static_cast<const uint8_t*>(data), byteCount, dst,
+                dstStage, dstAccess, true);
+    }
+
+    // ---- GPU -> CPU ----
+
+    ReadbackHandle TransferManager::Request(const rhi::Buffer& src, uint64_t offset, uint64_t size,
+            rhi::PipelineStage srcStage, rhi::Access srcAccess) {
+        MOE_PROFILE_ZONE();
+        if (mImpl == nullptr || !mImpl->mRunning) {
+            moe::Error::Set("TransferManager: not initialized");
+            return {};
+        }
+        const uint32_t index = mImpl->AllocRequest();
+        const std::shared_ptr<ReadbackRequest> request = mImpl->mRequests[index];
+        request->mActive = true;
+        request->mSlot = kInvalidTransferSlot;
+
+        TransferContext* context = &mImpl->mContext;
+        const bool ok = context->EnqueueReadback(src, offset, size, srcStage, srcAccess,
+                [request, context](TransferSlotId slot, std::byte* mapped, uint64_t bytes) {
+                    request->mSlot = slot;
+                    const bool valid = mapped != nullptr;
+                    const std::span<std::byte> span = valid
+                            ? std::span<std::byte>(mapped, bytes)
+                            : std::span<std::byte>{};
+                    request->mEvent.SetValue(
+                            ReadbackLease{span, valid ? context : nullptr, slot});
+                });
+        if (!ok) {
+            mImpl->FreeRequest(index);
+            return {};
+        }
+        return ReadbackHandle{index, request->mGeneration};
+    }
+
+    bool TransferManager::TryConsume(ReadbackHandle handle, ReadbackLease& out) {
+        if (mImpl == nullptr || !mImpl->mRunning || handle.mIndex >= mImpl->mRequests.size()) {
+            return false;
+        }
+        const std::shared_ptr<ReadbackRequest> request = mImpl->mRequests[handle.mIndex];
+        if (!request->mActive || request->mGeneration != handle.mGeneration) {
+            return false;
+        }
+        std::optional<ReadbackLease> value = request->mEvent.TryTake();
+        if (!value.has_value()) {
+            return false;
+        }
+        out = std::move(*value);
+        mImpl->FreeRequest(handle.mIndex);
+        return true;
+    }
+
+    moe::Task<ReadbackLease> TransferManager::Read(const rhi::Buffer& src, uint64_t offset,
+            uint64_t size, rhi::PipelineStage srcStage, rhi::Access srcAccess) {
+        const ReadbackHandle handle = Request(src, offset, size, srcStage, srcAccess);
+        if (!handle.IsValid()) {
+            co_return ReadbackLease{};
+        }
+        ReadbackLease lease = co_await mImpl->mRequests[handle.mIndex]->mEvent;
+        mImpl->FreeRequest(handle.mIndex);
+        co_return lease;
     }
 }// namespace moe::neo

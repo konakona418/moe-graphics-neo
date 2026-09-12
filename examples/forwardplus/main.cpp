@@ -145,12 +145,7 @@ namespace {
         AppendBox(mesh, glm::vec3(-8.0f, 0.8f, 6.0f), glm::vec3(0.8f, 0.8f, 0.8f));
         AppendBox(mesh, glm::vec3(8.0f, 1.2f, 5.0f), glm::vec3(1.2f, 1.2f, 1.2f));
 
-        moe::neo::Uploader uploader;
-        if (!uploader.Init(ctx.mDevice)) {
-            std::fprintf(stderr, "forwardplus: uploader: %s\n", moe::Error::Get().c_str());
-            return false;
-        }
-        if (!uploader.UploadMesh(mesh, data->mMesh)) {
+        if (!ctx.mTransfer.UploadMesh(mesh, data->mMesh)) {
             std::fprintf(stderr, "forwardplus: upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
@@ -230,7 +225,7 @@ namespace {
             return false;
         }
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, width, height,
-                    ctx.mSampleCount)) {
+                    ctx.mSampleCount, ctx.mTransfer)) {
             std::fprintf(stderr, "forwardplus: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

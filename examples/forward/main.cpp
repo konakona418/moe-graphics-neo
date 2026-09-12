@@ -3,7 +3,7 @@
 #include <Core/Error.hpp>
 #include <Neo/Renderer.hpp>
 #include <Neo/SwapchainImage.hpp>
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 #include <RHI/Shader.hpp>
 
 #include <imgui.h>
@@ -19,7 +19,6 @@
 
 namespace {
     struct ForwardData {
-        moe::neo::Uploader mUploader;
         moe::neo::UploadedMesh mMesh;
         moe::rhi::Shader mVert;
         moe::rhi::Shader mFrag;
@@ -67,12 +66,8 @@ namespace {
     bool Setup(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<ForwardData*>(userdata);
 
-        if (!data->mUploader.Init(ctx.mDevice)) {
-            std::fprintf(stderr, "forward: uploader init: %s\n", moe::Error::Get().c_str());
-            return false;
-        }
         moe::neo::Mesh box = MakeBoxMesh();
-        if (!data->mUploader.UploadMesh(box, data->mMesh)) {
+        if (!ctx.mTransfer.UploadMesh(box, data->mMesh)) {
             std::fprintf(stderr, "forward: upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
@@ -88,7 +83,7 @@ namespace {
         }
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
+                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount, ctx.mTransfer)) {
             std::fprintf(stderr, "forward: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

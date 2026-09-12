@@ -2,7 +2,7 @@
 
 #include <Neo/Assets.hpp>
 #include <Neo/Renderer.hpp>
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 #include <RHI/CommandList.hpp>
 
 #include <glm/glm.hpp>
@@ -46,15 +46,15 @@ namespace hakoniwa {
 
     class Grass {
     public:
-        bool Init(moe::rhi::Device& device, moe::neo::Assets& assets,
-                moe::neo::Renderer& renderer);
+        bool Init(moe::rhi::Device& device, moe::neo::TransferManager& transfer,
+                moe::neo::Assets& assets, moe::neo::Renderer& renderer);
         void Record(moe::rhi::CommandList& cmd, moe::neo::Assets& assets,
                 moe::neo::Renderer& renderer, moe::neo::RenderTargetHandle target,
                 const GrassFrame& frame, const GrassParams& params);
         void Destroy();
 
     private:
-        moe::neo::Uploader mUploader;
+        moe::neo::TransferManager* mTransfer{nullptr};
         moe::neo::ProgramHandle mProgram;
         moe::neo::UploadedMesh mMesh;
         int32_t mPcViewProj{-1};

@@ -68,13 +68,13 @@ namespace examples {
         if (!mScheduler.Init()) {
             return false;
         }
-        if (!mTransfer.Init(mDevice)) {
+        if (!mTransfer.Init(mDevice, mScheduler)) {
             return false;
         }
 
         // assets must be destroyed before the device (RHI leak traps)
         moe::Defer assetsCleanup([&] { mAssets.Destroy(); });
-        if (!mAssets.Init(mDevice)) {
+        if (!mAssets.Init(mDevice, mTransfer)) {
             return false;
         }
 

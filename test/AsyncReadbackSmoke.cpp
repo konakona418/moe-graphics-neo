@@ -5,8 +5,7 @@
 
 #include "TestSupport.hpp"
 
-#include <Neo/AsyncReadback.hpp>
-#include <Neo/TransferContext.hpp>
+#include <Neo/TransferManager.hpp>
 
 #include <RHI/Buffer.hpp>
 #include <RHI/CommandList.hpp>
@@ -42,11 +41,9 @@ int main() {
     moe::rhi::CommandList commandList;
 
     moe::Scheduler scheduler;
-    moe::neo::TransferContext transfer;
-    moe::neo::AsyncReadback readback;
+    moe::neo::TransferManager transfer;
 
     moe::Defer cleanup([&] {
-        readback.Shutdown();
         transfer.Shutdown();
         scheduler.Shutdown();
         commandList.Destroy();
@@ -94,10 +91,7 @@ int main() {
     if (!scheduler.Init(2)) {
         return moe::test::Fail(kTestName, "scheduler init failed");
     }
-    if (!transfer.Init(device)) {
-        return moe::test::Fail(kTestName);
-    }
-    if (!readback.Init(scheduler, transfer)) {
+    if (!transfer.Init(device, scheduler)) {
         return moe::test::Fail(kTestName);
     }
 
@@ -111,12 +105,12 @@ int main() {
     }
 
     // ---- poll path ----
-    const moe::neo::ReadbackHandle handle = readback.Request(storage, 0, kByteCount);
+    const moe::neo::ReadbackHandle handle = transfer.Request(storage, 0, kByteCount);
     if (!handle.IsValid()) {
         return moe::test::Fail(kTestName, "request failed");
     }
     moe::neo::ReadbackLease lease;
-    if (readback.TryConsume(handle, lease)) {
+    if (transfer.TryConsume(handle, lease)) {
         return moe::test::Fail(kTestName, "readback was ready before it was submitted");
     }
 
@@ -124,7 +118,7 @@ int main() {
     for (int frame = 0; frame < 3000 && !consumed; ++frame) {
         transfer.Pump();
         scheduler.Pump();
-        consumed = readback.TryConsume(handle, lease);
+        consumed = transfer.TryConsume(handle, lease);
         if (!consumed) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -147,7 +141,7 @@ int main() {
 
     // ---- coroutine path ----
     {
-        moe::Task<moe::neo::ReadbackLease> task = readback.Read(storage, 0, kByteCount);
+        moe::Task<moe::neo::ReadbackLease> task = transfer.Read(storage, 0, kByteCount);
         task.Start();
         for (int frame = 0; frame < 3000 && !task.IsDone(); ++frame) {
             transfer.Pump();

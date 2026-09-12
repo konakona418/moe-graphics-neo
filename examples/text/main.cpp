@@ -189,7 +189,7 @@ namespace {
             return false;
         }
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
+                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount, ctx.mTransfer)) {
             std::fprintf(stderr, "text: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

@@ -5,7 +5,7 @@
 #include "Neo/Material.hpp"
 #include "Neo/Scene.hpp"
 #include "Neo/Texture.hpp"
-#include "Neo/Uploader.hpp"
+#include "Neo/TransferManager.hpp"
 
 #include <RHI/Shader.hpp>
 
@@ -127,7 +127,7 @@ namespace moe::neo {
         Assets(const Assets&) = delete;
         Assets& operator=(const Assets&) = delete;
 
-        bool Init(rhi::Device& device);
+        bool Init(rhi::Device& device, TransferManager& transfer);
         void Destroy();
 
         // glTF import + upload in one call.
@@ -160,7 +160,7 @@ namespace moe::neo {
         void SetMaterialParam(ModelData& model, const char* materialName, const MaterialValue& value);
 
         rhi::Device* mDevice{nullptr};
-        Uploader mUploader;
+        TransferManager* mTransfer{nullptr};
         Cache<ModelData> mModels;
         Cache<UploadedTexture> mTextures;
         Cache<FontData> mFonts;

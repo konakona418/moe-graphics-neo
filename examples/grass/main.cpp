@@ -4,7 +4,7 @@
 #include <Neo/Renderer.hpp>
 #include <Neo/SwapchainImage.hpp>
 #include <Neo/TextureLoader.hpp>
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/Shader.hpp>
 
@@ -50,7 +50,6 @@ namespace {
     };
 
     struct PostfxData {
-        moe::neo::Uploader mUploader;
         moe::neo::UploadedMesh mBoxMesh;
         moe::neo::UploadedMesh mGrassMesh;
         moe::neo::UploadedMesh mGroundMesh;
@@ -252,18 +251,13 @@ namespace {
     bool Setup(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<PostfxData*>(userdata);
 
-        if (!data->mUploader.Init(ctx.mDevice)) {
-            std::fprintf(stderr, "grass: uploader: %s\n", moe::Error::Get().c_str());
-            return false;
-        }
-
-        if (!data->mUploader.UploadMesh(MakeBoxMesh(), data->mBoxMesh)
-                || !data->mUploader.UploadMesh(MakeGrassMesh(), data->mGrassMesh)
-                || !data->mUploader.UploadMesh(MakeGroundMesh(), data->mGroundMesh)) {
+        if (!ctx.mTransfer.UploadMesh(MakeBoxMesh(), data->mBoxMesh)
+                || !ctx.mTransfer.UploadMesh(MakeGrassMesh(), data->mGrassMesh)
+                || !ctx.mTransfer.UploadMesh(MakeGroundMesh(), data->mGroundMesh)) {
             std::fprintf(stderr, "grass: mesh upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        if (!data->mUploader.UploadTexture(MakeCheckerTexture(), data->mBoxTexture)) {
+        if (!ctx.mTransfer.UploadTexture(MakeCheckerTexture(), data->mBoxTexture)) {
             std::fprintf(stderr, "grass: texture upload: %s\n", moe::Error::Get().c_str());
             return false;
         }
@@ -280,7 +274,7 @@ namespace {
             const float s = scaleDist(rng);
             m = glm::scale(m, glm::vec3(s, s, s));
         }
-        if (!data->mUploader.UploadData(reinterpret_cast<const uint8_t*>(instances.data()),
+        if (!ctx.mTransfer.UploadData(reinterpret_cast<const uint8_t*>(instances.data()),
                 instances.size() * sizeof(glm::mat4), moe::rhi::BufferUsage::kVertex,
                 data->mInstanceBuffer)) {
             std::fprintf(stderr, "grass: instance upload: %s\n", moe::Error::Get().c_str());
@@ -323,7 +317,7 @@ namespace {
         }
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
+                ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount, ctx.mTransfer)) {
             std::fprintf(stderr, "grass: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

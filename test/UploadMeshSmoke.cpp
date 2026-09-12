@@ -1,4 +1,4 @@
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 
 #include <Core/Defer.hpp>
 #include "TestSupport.hpp"
@@ -39,7 +39,8 @@ int main() {
     deviceInfo.mPipelineCache = &cache;
     deviceInfo.mEnableValidation = true;
 
-    moe::neo::Uploader uploader;
+    moe::Scheduler scheduler;
+    moe::neo::TransferManager uploader;
     moe::neo::UploadedMesh gpu;
     moe::rhi::Buffer vertexReadback;
     moe::rhi::Buffer indexReadback;
@@ -56,13 +57,15 @@ int main() {
         indexReadback.Destroy();
         vertexReadback.Destroy();
         gpu.Destroy();
+        uploader.Shutdown();
+        scheduler.Shutdown();
         cache.Destroy();
         device.Destroy();
     });
     if (!moe::rhi::Device::Create(deviceInfo, device)) {
         return moe::test::Fail(kTestName);
     }
-    if (!uploader.Init(device)) {
+    if (!scheduler.Init(2) || !uploader.Init(device, scheduler)) {
         return moe::test::Fail(kTestName);
     }
 

@@ -71,13 +71,10 @@ namespace hakoniwa {
         }
     }// namespace
 
-    bool Terrain::Init(moe::rhi::Device& device, moe::neo::Assets& assets,
-            moe::neo::Renderer& renderer, const TerrainParams& params) {
-        if (!mUploader.Init(device)) {
-            std::fprintf(stderr, "hakoniwa: terrain uploader: %s\n", moe::Error::Get().c_str());
-            return false;
-        }
-        if (!mUploader.UploadMesh(
+    bool Terrain::Init(moe::rhi::Device& device, moe::neo::TransferManager& transfer,
+            moe::neo::Assets& assets, moe::neo::Renderer& renderer, const TerrainParams& params) {
+        mTransfer = &transfer;
+        if (!mTransfer->UploadMesh(
                     MakeTerrainMesh(params.mSize, params.mResolution, params.mAmplitude), mMesh)) {
             std::fprintf(stderr, "hakoniwa: terrain upload: %s\n", moe::Error::Get().c_str());
             return false;

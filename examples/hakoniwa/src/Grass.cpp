@@ -50,13 +50,10 @@ namespace hakoniwa {
         }
     }// namespace
 
-    bool Grass::Init(moe::rhi::Device& device, moe::neo::Assets& assets,
-            moe::neo::Renderer& renderer) {
-        if (!mUploader.Init(device)) {
-            std::fprintf(stderr, "hakoniwa: grass uploader: %s\n", moe::Error::Get().c_str());
-            return false;
-        }
-        if (!mUploader.UploadMesh(MakeBladeMesh(), mMesh)) {
+    bool Grass::Init(moe::rhi::Device& device, moe::neo::TransferManager& transfer,
+            moe::neo::Assets& assets, moe::neo::Renderer& renderer) {
+        mTransfer = &transfer;
+        if (!mTransfer->UploadMesh(MakeBladeMesh(), mMesh)) {
             std::fprintf(stderr, "hakoniwa: grass mesh: %s\n", moe::Error::Get().c_str());
             return false;
         }

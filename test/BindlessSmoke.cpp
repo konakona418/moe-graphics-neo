@@ -5,7 +5,7 @@
 // Exercises: feature request, bindless pool/layout/set, runtime AddImage,
 // unbounded-array pipeline layouts, bind + NonUniformResourceIndex sampling.
 
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 
 #include <RHI/BindlessSet.hpp>
 #include <RHI/CommandList.hpp>
@@ -45,8 +45,10 @@ int main() {
         texture.mData[i] = 0xFF; // R
         texture.mData[i + 3] = 0xFF; // A
     }
-    moe::neo::Uploader uploader;
-    CHECK(uploader.Init(device));
+    moe::Scheduler scheduler;
+    CHECK(scheduler.Init(2));
+    moe::neo::TransferManager uploader;
+    CHECK(uploader.Init(device, scheduler));
     moe::neo::UploadedTexture gpu;
     CHECK(uploader.UploadTexture(texture, gpu));
 
@@ -135,6 +137,8 @@ int main() {
     target.Destroy();
     bindless.Destroy();
     gpu.Destroy();
+    uploader.Shutdown();
+    scheduler.Shutdown();
     cache.Destroy();
     CHECK(device.WaitIdle());
     device.Destroy();

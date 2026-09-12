@@ -11,7 +11,7 @@
 #include <Neo/Assets.hpp>
 #include <Neo/Renderer.hpp>
 #include <Neo/SwapchainImage.hpp>
-#include <Neo/Uploader.hpp>
+#include <Neo/TransferManager.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
 #include <RHI/Pipeline.hpp>
@@ -58,7 +58,6 @@ namespace {
     };
 
     struct SnowData {
-        moe::neo::Uploader mUploader;
         // GPU-owned terrain state. The vertex/index buffers double as the
         // Renderer's UploadedMesh view (the build compute pass writes the
         // vertices directly, so they are raw storage buffers first).
@@ -293,7 +292,7 @@ namespace {
             return false;
         }
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache,
-                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
+                    ctx.mSwapchain.GetWidth(), ctx.mSwapchain.GetHeight(), ctx.mSampleCount, ctx.mTransfer)) {
             std::fprintf(stderr, "snow: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

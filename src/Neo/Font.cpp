@@ -486,10 +486,10 @@ namespace moe::neo {
             mFonts.Remove(handle);
             return {};
         }
-        if (!mUploader.UploadData(reinterpret_cast<const uint8_t*>(font->mCurves.data()),
+        if (!mTransfer->UploadData(reinterpret_cast<const uint8_t*>(font->mCurves.data()),
                     font->mCurves.size() * sizeof(float), rhi::BufferUsage::kStorage,
                     font->mCurveBuffer, rhi::PipelineStage::kFragmentShader)
-                || !mUploader.UploadData(reinterpret_cast<const uint8_t*>(font->mBands.data()),
+                || !mTransfer->UploadData(reinterpret_cast<const uint8_t*>(font->mBands.data()),
                         font->mBands.size() * sizeof(uint32_t), rhi::BufferUsage::kStorage,
                         font->mBandBuffer, rhi::PipelineStage::kFragmentShader)) {
             font->Destroy();

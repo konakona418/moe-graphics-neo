@@ -67,7 +67,7 @@ namespace {
         auto* data = static_cast<AppData*>(userdata);
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, ctx.mSwapchain.GetWidth(),
-                    ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
+                    ctx.mSwapchain.GetHeight(), ctx.mSampleCount, ctx.mTransfer)) {
             std::fprintf(stderr, "hakoniwa: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }
@@ -83,9 +83,10 @@ namespace {
             return false;
         }
 
-        if (!data->mTerrain.Init(ctx.mDevice, ctx.mAssets, data->mRenderer, data->mTerrainParams)
+        if (!data->mTerrain.Init(ctx.mDevice, ctx.mTransfer, ctx.mAssets, data->mRenderer,
+                    data->mTerrainParams)
                 || !data->mSky.Init(ctx.mAssets, data->mRenderer)
-                || !data->mGrass.Init(ctx.mDevice, ctx.mAssets, data->mRenderer)
+                || !data->mGrass.Init(ctx.mDevice, ctx.mTransfer, ctx.mAssets, data->mRenderer)
                 || !data->mPost.Init(ctx.mDevice, ctx.mAssets, data->mRenderer)
                 || !data->mMinimap.Init(ctx.mDevice, ctx.mAssets, data->mRenderer)
                 || !data->mHud.Init(ctx.mDevice, ctx.mAssets, data->mRenderer)) {

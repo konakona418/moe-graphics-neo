@@ -1,7 +1,7 @@
 #include <examples/common/App.hpp>
 
 #include <Core/Error.hpp>
-#include <Neo/AsyncReadback.hpp>
+#include <Neo/TransferManager.hpp>
 #include <RHI/Buffer.hpp>
 #include <RHI/CommandList.hpp>
 #include <RHI/DescriptorSet.hpp>
@@ -30,7 +30,6 @@ namespace {
         moe::rhi::Buffer mStorage;
         moe::rhi::Buffer mSyncReadback;
         moe::rhi::CommandList mCmd;
-        moe::neo::AsyncReadback mReadback;
 
         bool mSync{false};
         uint32_t mFrame{0};
@@ -94,10 +93,6 @@ namespace {
         if (!ctx.mDevice.CreateCommandList(data->mCmd)) {
             return false;
         }
-        if (!data->mReadback.Init(ctx.mScheduler, ctx.mTransfer)) {
-            std::fprintf(stderr, "async_readback: readback init: %s\n", moe::Error::Get().c_str());
-            return false;
-        }
         return true;
     }
 
@@ -148,7 +143,7 @@ namespace {
                 return;
             }
             if (!data->mHasPending) {
-                data->mPending = data->mReadback.Request(data->mStorage, 0, kByteCount);
+                data->mPending = ctx.mTransfer.Request(data->mStorage, 0, kByteCount);
                 data->mHasPending = data->mPending.IsValid();
                 data->mRequestFrame = data->mFrame;
             }
@@ -157,12 +152,12 @@ namespace {
                 std::chrono::steady_clock::now() - start).count();
     }
 
-    void DrawUI(void* userdata, examples::AppContext&) {
+    void DrawUI(void* userdata, examples::AppContext& ctx) {
         auto* data = static_cast<AsyncReadbackData*>(userdata);
 
         if (data->mHasPending) {
             moe::neo::ReadbackLease lease;
-            if (data->mReadback.TryConsume(data->mPending, lease)) {
+            if (ctx.mTransfer.TryConsume(data->mPending, lease)) {
                 const auto* values = reinterpret_cast<const uint32_t*>(lease.Bytes().data());
                 data->mChecksum = Checksum(values, kElementCount);
                 data->mLatency = data->mFrame - data->mRequestFrame;
@@ -183,7 +178,6 @@ namespace {
 
     void Shutdown(void* userdata, examples::AppContext&) {
         auto* data = static_cast<AsyncReadbackData*>(userdata);
-        data->mReadback.Shutdown();
         data->mCmd.Destroy();
         data->mSet.Destroy();
         data->mSyncReadback.Destroy();

@@ -147,7 +147,7 @@ namespace moe::neo {
         uint32_t mDynamicVertexCapacity{0};
         uint32_t mDynamicVertexLastFrameBytes{0};
         bool mDynamicVertexUsed{false};
-        Uploader mUploader;
+        TransferManager* mTransfer{nullptr};
 
         RenderTarget* ResolveTarget(RenderTargetHandle handle) {
             return handle.IsValid() ? mTargets.Get(handle) : nullptr;
@@ -456,7 +456,7 @@ namespace moe::neo {
     Renderer::~Renderer() = default;
 
     bool Renderer::Init(rhi::Device& device, rhi::DefaultPipelineCache& cache,
-            uint32_t width, uint32_t height, uint32_t sampleCount) {
+            uint32_t width, uint32_t height, uint32_t sampleCount, TransferManager& transfer) {
         MOE_PROFILE_ZONE();
         if (mImpl->mDevice != nullptr) {
             return moe::Fail("Renderer already initialized");
@@ -472,11 +472,7 @@ namespace moe::neo {
         mImpl->mWidth = width;
         mImpl->mHeight = height;
         mImpl->mSampleCount = sampleCount;
-
-        if (!mImpl->mUploader.Init(device)) {
-            mImpl->mDevice = nullptr;
-            return moe::Fail("Renderer: uploader: " + moe::Error::Get());
-        }
+        mImpl->mTransfer = &transfer;
 
         rhi::ImageCreateInfo depthInfo{};
         depthInfo.mType = rhi::ImageType::k2D;
@@ -597,7 +593,7 @@ namespace moe::neo {
         // submission (transfer + barrier), which the host waits for.
         if (!impl.mDynamicVertexCpu.empty()) {
             const uint32_t bytes = static_cast<uint32_t>(impl.mDynamicVertexCpu.size());
-            if (!impl.mUploader.UpdateBuffer(impl.mDynamicVertexBuffer,
+            if (!impl.mTransfer->UpdateBuffer(impl.mDynamicVertexBuffer,
                         impl.mDynamicVertexCpu.data(), bytes, rhi::PipelineStage::kVertexInput,
                         rhi::Access::kVertexAttributeRead)) {
                 moe::Error::Set("Renderer: dynamic vertex upload: " + moe::Error::Get());

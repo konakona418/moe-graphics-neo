@@ -258,7 +258,7 @@ namespace {
             return false;
         }
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, ctx.mSwapchain.GetWidth(),
-                    ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
+                    ctx.mSwapchain.GetHeight(), ctx.mSampleCount, ctx.mTransfer)) {
             std::fprintf(stderr, "toon_cloud: renderer: %s\n", moe::Error::Get().c_str());
             return false;
         }

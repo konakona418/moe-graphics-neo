@@ -1,7 +1,6 @@
 add_library(moe-neo STATIC
   Animation.cpp
   Assets.cpp
-  AsyncReadback.cpp
   Audio.cpp
   Content.cpp
   Font.cpp
@@ -14,7 +13,7 @@ add_library(moe-neo STATIC
   Text.cpp
   TextureLoader.cpp
   TransferContext.cpp
-  Uploader.cpp
+  TransferManager.cpp
   Window.cpp
 )
 

@@ -21,7 +21,7 @@ namespace moe::neo {
     //
     // Lifecycle is explicit: Init() then Shutdown() (the destructor is a leak
     // trap). Shutdown() joins the completion thread; call it before destroying
-    // the Device and after any AsyncReadback built on this context.
+    // the Device and after any TransferManager built on this context.
     class TransferContext {
     public:
         TransferContext();
@@ -34,9 +34,9 @@ namespace moe::neo {
         void Shutdown();
 
         // CPU->GPU: staging write + copy into dst, with a transfer->dstStage
-        // barrier. waitForCompletion blocks on the timeline (Uploader's
-        // synchronous paths); otherwise the staging slot is recycled by the
-        // completion thread once the GPU is done.
+        // barrier. waitForCompletion blocks on the timeline (the upload path);
+        // otherwise the staging slot is recycled by the completion thread once
+        // the GPU is done.
         bool Upload(const uint8_t* data, size_t byteCount, const rhi::Buffer& dst,
                 rhi::PipelineStage dstStage, rhi::Access dstAccess, bool waitForCompletion);
 
@@ -51,8 +51,16 @@ namespace moe::neo {
 
         // Maps a staging slot for CPU access (host-visible, cache invalidated).
         std::byte* MapSlot(TransferSlotId slot);
+        // Unmaps a staging slot (flushing CPU writes) without releasing it.
+        void UnmapSlot(TransferSlotId slot);
         // Unmaps and returns the slot to the pool.
         void ReleaseSlot(TransferSlotId slot);
+
+        // Raw staging access for callers that record their own transfer
+        // commands (e.g. image/mip uploads). AcquireStaging returns a free slot
+        // of at least `size` bytes; pair it with ReleaseSlot.
+        TransferSlotId AcquireStaging(uint64_t size);
+        rhi::Buffer& GetStagingBuffer(TransferSlotId slot);
 
         // Submits queued readback copies. Call once per frame after Present.
         void Pump();
