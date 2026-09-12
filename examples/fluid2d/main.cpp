@@ -1,4 +1,5 @@
 #include <examples/common/App.hpp>
+#include <examples/common/Bloom.hpp>
 
 #include <Core/Error.hpp>
 #include <Neo/Renderer.hpp>
@@ -89,6 +90,10 @@ namespace {
         moe::rhi::Shader mDisplayFrag;
         moe::rhi::ShaderProgram mDisplayProgram;
         int32_t mPcExposure{-1};
+
+        moe::neo::RenderTargetHandle mSceneTarget;
+        examples::Bloom mBloom;
+        examples::BloomParams mBloomParams{0.7f, 0.5f, 1.2f};
 
         moe::rhi::ImageLayout mVelocityLayout{moe::rhi::ImageLayout::kUndefined};
         moe::rhi::ImageLayout mDensityLayout{moe::rhi::ImageLayout::kUndefined};
@@ -202,6 +207,16 @@ namespace {
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, ctx.mSwapchain.GetWidth(),
                     ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
             std::fprintf(stderr, "fluid2d: renderer: %s\n", moe::Error::Get().c_str());
+            return false;
+        }
+
+        data->mSceneTarget = data->mRenderer.CreateRenderTarget(ctx.mSwapchain.GetWidth(),
+                ctx.mSwapchain.GetHeight(), moe::rhi::Format::kR16G16B16A16Float, false);
+        if (!data->mSceneTarget.IsValid()
+                || !data->mBloom.Init(ctx.mDevice, data->mRenderer,
+                        MOE_SOURCE_DIR "/shaders/examples/common/", ctx.mSwapchain.GetWidth(),
+                        ctx.mSwapchain.GetHeight())) {
+            std::fprintf(stderr, "fluid2d: bloom: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -336,15 +351,18 @@ namespace {
             data->mDensityLayout = moe::rhi::ImageLayout::kShaderReadOnly;
         }
 
-        const moe::neo::PassDesc display{"fluid2d-display",
-                moe::neo::ColorAttachment(moe::neo::RenderTargetHandle{}, moe::rhi::LoadOp::kClear),
-                {}};
+        const moe::neo::PassDesc display{"fluid2d-scene",
+                moe::neo::ColorAttachment(data->mSceneTarget, moe::rhi::LoadOp::kClear), {}};
         data->mRenderer.Execute(display, [&](moe::neo::PassContext& pass) {
             pass.SetPushConstant(data->mPcExposure, &data->mExposure, sizeof(data->mExposure));
             pass.BindImage(0, data->mDensity);
             pass.BindSampler(1, data->mSampler);
             pass.DrawFullscreen(data->mDisplayProgram);
         });
+
+        // Bloom over the linear HDR scene, composited to the swapchain.
+        moe::neo::RenderTarget* scene = data->mRenderer.GetRenderTarget(data->mSceneTarget);
+        data->mBloom.Render(data->mRenderer, *scene->mImage, data->mBloomParams);
 
         data->mRenderer.EndFrame();
         data->mFrame.Release();
@@ -359,6 +377,8 @@ namespace {
         ImGui::SliderFloat("force range", &data->mForceRange, 0.005f, 0.2f);
         ImGui::SliderInt("solver iterations", &data->mSolverIterations, 0, 100);
         ImGui::SliderFloat("exposure", &data->mExposure, 0.1f, 10.0f);
+        ImGui::SliderFloat("bloom threshold", &data->mBloomParams.mThreshold, 0.0f, 3.0f);
+        ImGui::SliderFloat("bloom intensity", &data->mBloomParams.mIntensity, 0.0f, 3.0f);
         ImGui::Checkbox("paused", &data->mPaused);
         ImGui::SameLine();
         if (ImGui::Button("reset")) {
@@ -382,6 +402,7 @@ namespace {
         data->mDensity.Destroy();
         data->mPressure.Destroy();
         data->mDivergence.Destroy();
+        data->mBloom.Destroy();
         data->mRenderer.Destroy();
     }
 }// namespace

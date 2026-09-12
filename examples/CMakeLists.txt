@@ -1,5 +1,6 @@
 add_library(moe-example-common STATIC
   common/App.cpp
+  common/Bloom.cpp
 )
 
 target_include_directories(moe-example-common PUBLIC

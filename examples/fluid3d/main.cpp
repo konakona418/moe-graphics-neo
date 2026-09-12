@@ -1,4 +1,5 @@
 #include <examples/common/App.hpp>
+#include <examples/common/Bloom.hpp>
 
 #include <Core/Error.hpp>
 #include <Neo/Renderer.hpp>
@@ -100,10 +101,9 @@ namespace {
         moe::rhi::Shader mDisplayVert;
         moe::rhi::Shader mDisplayFrag;
         moe::rhi::ShaderProgram mDisplayProgram;
-        moe::rhi::Shader mBlitVert;
-        moe::rhi::Shader mBlitFrag;
-        moe::rhi::ShaderProgram mBlitProgram;
         moe::neo::RenderTargetHandle mVolumeTarget;
+        examples::Bloom mBloom;
+        examples::BloomParams mBloomParams{0.5f, 0.5f, 1.5f};
         int32_t mPcCameraPosTan{-1};
         int32_t mPcForwardAspect{-1};
         int32_t mPcRightOpacity{-1};
@@ -119,8 +119,8 @@ namespace {
         float mForceIntensity{200.0f};
         float mForceRange{0.10f};
         int mSolverIterations{20};
-        float mOpacity{6.0f};
-        float mExposure{2.2f};
+        float mOpacity{8.0f};
+        float mExposure{5.0f};
         float mRaySteps{64.0f};
         bool mPaused{false};
         bool mReset{false};
@@ -128,7 +128,7 @@ namespace {
 
         float mYaw{0.7f};
         float mPitch{0.32f};
-        float mRadius{2.6f};
+        float mRadius{2.2f};
         bool mDragging{false};
 
         glm::vec3 mEmitter{0.0f};
@@ -228,14 +228,6 @@ namespace {
             std::fprintf(stderr, "fluid3d: display shader: %s\n", moe::Error::Get().c_str());
             return false;
         }
-        if (!data->mBlitVert.Load((base + "blit.vert.spv").c_str(), moe::rhi::ShaderStage::kVertex)
-                || !data->mBlitFrag.Load((base + "blit.frag.spv").c_str(),
-                        moe::rhi::ShaderStage::kFragment)
-                || !data->mBlitProgram.AddShader(data->mBlitVert)
-                || !data->mBlitProgram.AddShader(data->mBlitFrag)) {
-            std::fprintf(stderr, "fluid3d: blit shader: %s\n", moe::Error::Get().c_str());
-            return false;
-        }
 
         if (!data->mRenderer.Init(ctx.mDevice, ctx.mPipelineCache, ctx.mSwapchain.GetWidth(),
                     ctx.mSwapchain.GetHeight(), ctx.mSampleCount)) {
@@ -244,13 +236,15 @@ namespace {
         }
 
         // The volume raymarch is the frame's cost, so render it at half
-        // resolution (HDR) and upscale with a cheap blit.
-        data->mVolumeTarget = data->mRenderer.CreateRenderTarget(
-                std::max(1u, ctx.mSwapchain.GetWidth() / 2),
-                std::max(1u, ctx.mSwapchain.GetHeight() / 2),
+        // resolution (HDR); bloom then composites it up to the swapchain.
+        const uint32_t volumeWidth = std::max(1u, ctx.mSwapchain.GetWidth() / 2);
+        const uint32_t volumeHeight = std::max(1u, ctx.mSwapchain.GetHeight() / 2);
+        data->mVolumeTarget = data->mRenderer.CreateRenderTarget(volumeWidth, volumeHeight,
                 moe::rhi::Format::kR16G16B16A16Float, false, 1);
-        if (!data->mVolumeTarget.IsValid()) {
-            std::fprintf(stderr, "fluid3d: volume target: %s\n", moe::Error::Get().c_str());
+        if (!data->mVolumeTarget.IsValid()
+                || !data->mBloom.Init(ctx.mDevice, data->mRenderer,
+                        MOE_SOURCE_DIR "/shaders/examples/common/", volumeWidth, volumeHeight)) {
+            std::fprintf(stderr, "fluid3d: bloom: %s\n", moe::Error::Get().c_str());
             return false;
         }
 
@@ -437,14 +431,7 @@ namespace {
         });
 
         moe::neo::RenderTarget* volume = data->mRenderer.GetRenderTarget(data->mVolumeTarget);
-        const moe::neo::PassDesc blitPass{"fluid3d-blit",
-                moe::neo::ColorAttachment(moe::neo::RenderTargetHandle{}, moe::rhi::LoadOp::kClear),
-                {}};
-        data->mRenderer.Execute(blitPass, [&](moe::neo::PassContext& pass) {
-            pass.BindImage(0, *volume->mImage);
-            pass.BindSampler(1, data->mSampler);
-            pass.DrawFullscreen(data->mBlitProgram);
-        });
+        data->mBloom.Render(data->mRenderer, *volume->mImage, data->mBloomParams);
 
         data->mRenderer.EndFrame();
         data->mFrame.Release();
@@ -459,8 +446,10 @@ namespace {
         ImGui::SliderFloat("force range", &data->mForceRange, 0.01f, 0.3f);
         ImGui::SliderInt("solver iterations", &data->mSolverIterations, 0, 60);
         ImGui::SliderFloat("opacity", &data->mOpacity, 0.1f, 4.0f);
-        ImGui::SliderFloat("exposure", &data->mExposure, 0.1f, 5.0f);
+        ImGui::SliderFloat("exposure", &data->mExposure, 0.1f, 8.0f);
         ImGui::SliderFloat("ray steps", &data->mRaySteps, 32.0f, 384.0f);
+        ImGui::SliderFloat("bloom threshold", &data->mBloomParams.mThreshold, 0.0f, 3.0f);
+        ImGui::SliderFloat("bloom intensity", &data->mBloomParams.mIntensity, 0.0f, 3.0f);
         ImGui::Checkbox("paused", &data->mPaused);
         ImGui::SameLine();
         if (ImGui::Button("reset")) {
@@ -484,6 +473,7 @@ namespace {
         data->mDensity.Destroy();
         data->mPressure.Destroy();
         data->mDivergence.Destroy();
+        data->mBloom.Destroy();
         data->mRenderer.Destroy();
     }
 }// namespace

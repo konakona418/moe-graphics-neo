@@ -31,11 +31,9 @@ VertexOutput vertexMain(uint vertexId : SV_VulkanVertexId) {
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target {
     float4 den = densityTex.Sample(linearSampler, input.mUv);
-    float3 col = den.rgb;
-    // Reinhard-style soft roll-off so the accumulated dye does not clip.
-    col = col * pcs.exposure / (1.0 + col * pcs.exposure);
-    // Faint cool background so the obstacle silhouette reads.
+    // Linear HDR (the bloom composite tone maps the sum); exposure lifts the
+    // bright dye cores above 1 so the bloom can pick them out.
+    float3 col = den.rgb * pcs.exposure;
     float3 bg = float3(0.02, 0.03, 0.05);
-    col = bg + col;
-    return float4(col, 1.0);
+    return float4(bg + col, 1.0);
 }
