@@ -204,3 +204,27 @@ target_compile_definitions(moe-example-ui PRIVATE
 if(TARGET moe-shaders)
     add_dependencies(moe-example-ui moe-shaders)
 endif()
+
+add_executable(moe-example-hakoniwa
+  hakoniwa/src/main.cpp
+  hakoniwa/src/Terrain.cpp
+  hakoniwa/src/Sky.cpp
+  hakoniwa/src/Grass.cpp
+  hakoniwa/src/Physics.cpp
+  hakoniwa/src/Post.cpp
+  hakoniwa/src/Minimap.cpp
+  hakoniwa/src/Hud.cpp
+)
+
+target_link_libraries(moe-example-hakoniwa PRIVATE
+  moe-example-common
+  moe-ui
+)
+
+target_compile_definitions(moe-example-hakoniwa PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-hakoniwa moe-shaders)
+endif()

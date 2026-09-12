@@ -28,4 +28,4 @@ gha-creds-*.json
 /PLAN.md
 
 # runtime log
-/engine.log
+engine.log
