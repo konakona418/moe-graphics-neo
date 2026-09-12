@@ -292,3 +292,19 @@ target_compile_definitions(moe-example-multiqueue PRIVATE
 if(TARGET moe-shaders)
     add_dependencies(moe-example-multiqueue moe-shaders)
 endif()
+
+add_executable(moe-example-async-readback-coro
+  async_readback_coro/main.cpp
+)
+
+target_link_libraries(moe-example-async-readback-coro PRIVATE
+  moe-example-common
+)
+
+target_compile_definitions(moe-example-async-readback-coro PRIVATE
+  MOE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if(TARGET moe-shaders)
+    add_dependencies(moe-example-async-readback-coro moe-shaders)
+endif()
